@@ -1,4 +1,4 @@
-// /api/betty — Open chat v3: topic-aware answers, no bland fillers (CommonJS)
+// /api/betty — Open chat v3.1: engage intent, topic-aware answers, no bland fillers (CommonJS)
 
 function setCORS(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -106,6 +106,10 @@ function detectScenario(msg){
 
 // ---- topic-aware answers (two variants each to avoid repeats) ----
 const ANSWERS = {
+  engage: [
+    "Of course — go ahead. What’s on your mind?",
+    "Sure thing, Detective. Fire away."
+  ],
   smalltalk: [
     "I’m good, thank you. What would you like me to look into?",
     "All well here, thanks. What shall we talk through?"
@@ -139,8 +143,8 @@ const ANSWERS = {
     "Happy to ask a few questions and keep it above board."
   ],
   genericQ: [
-    "I can handle that and keep it straightforward.",
-    "Happy to do that and keep it neat."
+    "Happy to help — tell me a bit more.",
+    "I can help with that. What’s the situation?"
   ],
   clients: [
     "I like a clear agenda so we get to the point.",
@@ -165,16 +169,24 @@ const ANSWERS = {
 };
 
 function chooseDifferent(pair, last) {
-  // pick the variant that isn't equal to the last Betty line
   const [a,b] = pair;
   if (!last) return a;
   return (last.toLowerCase() === a.toLowerCase()) ? b : a;
 }
 
+// ---- question/statement responders ----
 function answerQuestion(msg, last) {
-  const m = (msg||"").toLowerCase();
+  const m = (msg || "").toLowerCase();
+
+  // Engage / permission to talk
+  if (/(can we talk|can i ask|can we chat|are you free|got a minute|quick question|can i run something by you)/i.test(m))
+    return chooseDifferent(ANSWERS.engage, last);
+
+  // Small talk
   if (/how are you|how’s it going|you ok|are you well/.test(m))
     return chooseDifferent(ANSWERS.smalltalk, last);
+
+  // Topic questions
   if (/should.*(accept|take).*(gift|hamper|present|bottle|voucher|card)/.test(m))
     return chooseDifferent(ANSWERS.gifts, last);
   if (/(what|how).*(g(&|and)h|register|log|record)/.test(m))
@@ -189,6 +201,8 @@ function answerQuestion(msg, last) {
     return chooseDifferent(ANSWERS.thirdparty, last);
   if (/donation|sponsorship|charity|csr.*(ok|how|can|should)/.test(m))
     return chooseDifferent(ANSWERS.donations, last);
+
+  // Friendly catch-all
   return chooseDifferent(ANSWERS.genericQ, last);
 }
 
@@ -225,13 +239,13 @@ module.exports = function handler(req, res){
       return res.status(200).json({ ok: true, reply: tone(pick(BETTY.openerVariants)) });
     }
 
-    // Close if learner states a correct rule/policy
+    // 0) If learner states a correct rule/policy → warm close
     const close = detectLearnerPolicy(message);
     if (close){
       return res.status(200).json({ ok: true, reply: tone("Thanks Detective — that’s clear. " + close) });
     }
 
-    // Scenario-specific context if matched
+    // 1) Scenario-specific context if matched
     const sc = detectScenario(message);
     if (sc){
       let resp = sc.speak(message);
@@ -242,7 +256,7 @@ module.exports = function handler(req, res){
       return res.status(200).json({ ok: true, reply: tone(resp) });
     }
 
-    // Direct Q&A vs statement with topic-aware, non-generic replies
+    // 2) Direct Q&A vs statement with topic-aware, non-generic replies
     const prevBetty = lastBetty(history);
     const reply = /\?\s*$/.test(message)
       ? answerQuestion(message, prevBetty)
