@@ -1,17 +1,16 @@
-// /api/betty — Betty persona + ABC scenarios + probes + light free-flow (CommonJS)
+// /api/betty — Betty persona + probes + conversational fallback (CommonJS)
 
 function setCORS(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
 }
+
 const LIMITS = { gift: 50, giftPublicOfficial: 25, hospitality: 200 };
 
-// --- Betty's persona (used for small-talk and tone) ------------------------
 const BETTY = {
   name: "Betty",
   role: "Sales Executive at Acme Group",
-  vibe: ["friendly", "candid", "professional"],
   home: "Manchester",
   quirks: [
     "I keep a tiny paper diary with sticky notes",
@@ -21,7 +20,6 @@ const BETTY = {
   opener: "Hi, I’m Betty from Acme. Ask me about gifts, hospitality or ABC."
 };
 
-// --- Scenarios with probes and success conditions -------------------------
 const SCENARIOS = [
   {
     key: "tickets_tender",
@@ -111,11 +109,10 @@ const SCENARIOS = [
   }
 ];
 
-// --- Utility helpers -------------------------------------------------------
+// ---------- utilities ----------
 function clamp(text, n) { text = (text || "").toString(); return text.length <= n ? text : text.slice(0, n); }
 function capSentences(s, max) { const parts = (s||"").replace(/\s+/g," ").trim().match(/[^.!?]+[.!?]?/g)||[s||""]; return parts.slice(0,max).join(" ").trim(); }
 function bettyTone(s) {
-  // Keep 1–2 short sentences, UK tone; sprinkle a tiny detail sometimes.
   let out = s || BETTY.opener;
   if (Math.random() < 0.25 && out.length < 180) {
     const q = BETTY.quirks[Math.floor(Math.random()*BETTY.quirks.length)];
@@ -124,27 +121,6 @@ function bettyTone(s) {
   return clamp(capSentences(out, 2), 240);
 }
 
-// --- Free-flow: small talk & loosely related Qs ----------------------------
-function isSmallTalk(msg) {
-  const m = msg.toLowerCase();
-  return /(how are you|who are you|where.*from|your role|what do you do|hello|hi|morning|afternoon)/i.test(m);
-}
-function smallTalkReply() {
-  return `${BETTY.name} here in ${BETTY.home}; I’m a sales exec at Acme. Happy to chat, but let’s keep it around gifts, hospitality and ABC.`;
-}
-function isLooselyRelated(msg) {
-  // Allow short answers on sales life, clients, targets, demos, travel, meetings, ethics, training
-  return /(client|prospect|demo|quarter|target|travel|meeting|training|ethic|policy|register|record|due diligence)/i.test(msg);
-}
-function looseReply(msg) {
-  // Brief answer + steer back
-  if (/travel/i.test(msg)) return "I travel a fair bit for demos; I keep receipts tidy and stick to economy. What ABC point are you exploring?";
-  if (/client|prospect/i.test(msg)) return "Clients like a clear agenda and outcomes. Where does ABC guidance fit in your case?";
-  if (/register|record/i.test(msg)) return "I log items of value in the G&H Register so books stay accurate. What does policy say for your scenario?";
-  return "Happy to share from experience; I try to keep things tidy and transparent. What’s the ABC angle you want me to apply?";
-}
-
-// --- Scenario & policy flow -----------------------------------------------
 function detectScenario(msg) {
   for (const sc of SCENARIOS) {
     if (sc.match.test(msg) && (!sc.also || sc.also.test(msg))) return sc;
@@ -164,15 +140,64 @@ function scenarioFlow(sc, userMsg, history) {
   return "Nearly there—what does our policy say to do in this case?";
 }
 
-// --- Generic fallback ------------------------------------------------------
-function genericAnswer(msg) {
-  const m = (msg || "").toLowerCase();
-  if (/facilitation/.test(m)) return "Facilitation payments are banned; only in a safety emergency would we pay the minimum and report within 24 hours.";
-  if (/public official|mayor|council/.test(m)) return "With public officials we keep to token items only (≤ £25) with Compliance pre-approval and a record in the Register.";
-  return "I follow zero-tolerance rules, keep gifts modest and logged, avoid anything during tenders, and ask Compliance if in doubt.";
+// ---------- conversational fallback (replaces bland generic line) ----------
+function topicCategory(msg) {
+  const m = msg.toLowerCase();
+  if (/voucher|cash|gift card|crypto/.test(m)) return "cash_like";
+  if (/gift|hamper|present|bottle|rioja/.test(m)) return "gift";
+  if (/hospitality|dinner|lunch|tickets|event/.test(m)) return "hospitality";
+  if (/public official|mayor|council|soe|state/.test(m)) return "public_official";
+  if (/tender|rfp|bid/.test(m)) return "tender";
+  if (/register|log|record|books/.test(m)) return "records";
+  if (/due diligence|onboard|third party|agent|intermediary/.test(m)) return "third_party";
+  if (/travel|flight|hotel|expenses/.test(m)) return "travel";
+  if (/donation|sponsorship|charity|csr/.test(m)) return "donations";
+  if (/conflict|relative|cousin|friend/.test(m)) return "conflict";
+  return "misc";
 }
 
-// --- HTTP handler ----------------------------------------------------------
+function summarise(msg) {
+  const words = (msg || "").toLowerCase().replace(/[^a-z0-9£\s]/g,"").split(/\s+/).filter(w => w && w.length > 2);
+  const keep = [];
+  for (const w of words) {
+    if (keep.indexOf(w) === -1 && keep.length < 5) keep.push(w);
+  }
+  return keep.join(" ");
+}
+
+function conversationalReply(msg) {
+  const cat = topicCategory(msg);
+  switch (cat) {
+    case "cash_like":
+      return "Cash or cash-equivalent gifts are off limits; I steer to a modest, transparent option or decline. What policy bit would you apply here?";
+    case "gift":
+      return `Small gifts can be okay if not influencing anything and ≤ £${LIMITS.gift}; we log them. What would you have me do in your case?`;
+    case "hospitality":
+      return `Hospitality must be reasonable and ≤ £${LIMITS.hospitality} per person; not during live tenders. What’s the compliant next step?`;
+    case "public_official":
+      return "With public officials we keep to token items only (≤ £25) with Compliance pre-approval. How would you guide me here?";
+    case "tender":
+      return "During tenders we avoid gifts or hospitality altogether to remove doubt. What would you advise me to do?";
+    case "records":
+      return "I keep the G&H Register tidy so our books are accurate. What should I record in your scenario?";
+    case "third_party":
+      return "With agents we do risk-based due diligence and clear contracts. What safeguard would you want first?";
+    case "travel":
+      return "I stick to economy and keep receipts neat; it keeps spend bona fide. What policy point matters most here?";
+    case "donations":
+      return "Donations need Compliance pre-approval and go to organisations, not people. What would you recommend I do?";
+    case "conflict":
+      return "Where there’s a personal link, I call out the conflict and route via the standard process. What’s your direction for me?";
+    default: {
+      const hint = summarise(msg);
+      return hint
+        ? `I hear you on "${hint}". From a practical view I keep things modest, logged and transparent. What does policy say I should do?`
+        : "Happy to chat from experience. What does policy say I should do here?";
+    }
+  }
+}
+
+// ---------- HTTP handler ----------
 module.exports = function handler(req, res) {
   setCORS(res);
   if (req.method === "OPTIONS") return res.status(200).end();
@@ -195,25 +220,16 @@ module.exports = function handler(req, res) {
       return res.status(200).json({ ok: true, reply: bettyTone(BETTY.opener) });
     }
 
-    // 1) Small talk gets a warm, short reply, then steer back
-    if (isSmallTalk(message)) {
-      return res.status(200).json({ ok: true, reply: bettyTone(smallTalkReply()) });
-    }
-
-    // 2) Loosely related work questions allowed, then nudge toward ABC
-    if (isLooselyRelated(message)) {
-      return res.status(200).json({ ok: true, reply: bettyTone(looseReply(message)) });
-    }
-
-    // 3) Scenario flow with probes and positive close on correct policy
+    // 1) Scenario flow (with probes and positive close when learner states policy)
     const sc = detectScenario(message);
     if (sc) {
       const reply = scenarioFlow(sc, message, history);
       return res.status(200).json({ ok: true, reply: bettyTone(reply) });
     }
 
-    // 4) Generic ABC guidance
-    return res.status(200).json({ ok: true, reply: bettyTone(genericAnswer(message)) });
+    // 2) Conversational fallback (reflect + brief answer + nudge)
+    const talk = conversationalReply(message);
+    return res.status(200).json({ ok: true, reply: bettyTone(talk) });
 
   } catch (e) {
     return res.status(200).json({ ok: false, reply: "", error: "Server error processing your message." });
