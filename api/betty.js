@@ -1,18 +1,17 @@
-// Intent-first, deterministic router for Betty (uses the banks).
-// Answers the learner’s actual question, ends when learner states the correct rule.
-// CommonJS for Vercel.
+// Betty — intent-first, deterministic replies with targeted clarifier when info is missing.
+// Answers the last learner input, then (if needed) adds ONE short clarifier relevant to ABC.
+// CommonJS + CORS (works on Vercel). Expects POST { message, history }.
 
-/* -------------------- CORS -------------------- */
 function setCORS(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
 }
 
-/* -------------------- Banks ------------------- */
-const BANK = require("./betty_banks");
+/* ---------------- Banks (verbatim authored lines live here) ---------------- */
+const BANK = require("./betty_banks"); // keep your existing banks file
 
-/* -------------------- Utils ------------------- */
+/* ---------------- Utils ---------------- */
 const MAX_SENTENCES = 3;
 const MAX_CHARS = 360;
 
@@ -22,22 +21,27 @@ function capSentences(s, max){ return toSentences(s).slice(0, max).join(" ").tri
 function tone(s){ return clamp(capSentences(s, MAX_SENTENCES), MAX_CHARS); }
 function hash(str){ let h=2166136261>>>0; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619);} return h>>>0; }
 function pickDet(arr, key){ if (!arr || !arr.length) return ""; return arr[hash(String(key)) % arr.length]; }
+
 function lastBetty(history) {
   if (!history) return "";
   const lines = history.split(/\r?\n/).reverse();
-  for (const ln of lines) {
-    const m = ln.match(/^Betty:\s*(.+)$/i);
-    if (m) return m[1].trim();
-  }
+  for (const ln of lines) { const m = ln.match(/^Betty:\s*(.+)$/i); if (m) return m[1].trim(); }
   return "";
 }
 
-/* -------------------- Slot helpers ------------------- */
+/* ---------------- Slot extraction ---------------- */
 function getAmount(msg){ const m=(msg||"").match(/£\s?(\d{1,5})/i); return m?parseInt(m[1],10):null; }
 function isDuringTender(msg){ return /(tender|rfp|bid)/i.test(msg||""); }
 function mentionsOfficial(msg){ return /(public\s*official|mayor|council|soe|state[-\s]*owned)/i.test(msg||""); }
+function mentionsGift(msg){ return /(gift|hamper|present|bottle|voucher|card)/i.test(msg||""); }
+function mentionsHospitality(msg){ return /(coffee|lunch|dinner|meal|tickets|event|hospitality)/i.test(msg||""); }
+function mentionsTravel(msg){ return /(flight|travel|hotel|accommodation|airfare|lodge|book.*(business|economy))/i.test(msg||""); }
+function mentionsThirdParty(msg){ return /(agent|intermediary|third\s*party|consultant)/i.test(msg||""); }
+function mentionsFacilitation(msg){ return /(facilitation|speed\s*payment|cash\s*(to|get)\s*speed|extra\s*fee)/i.test(msg||""); }
+function mentionsDonation(msg){ return /(donation|sponsorship|charity|csr)/i.test(msg||""); }
+function mentionsRegister(msg){ return /(register|log|record|books)/i.test(msg||""); }
 
-/* -------------------- Close when learner states correct policy ------------------- */
+/* ---------------- Conversation close on correct policy ---------------- */
 function detectLearnerPolicy(msg){
   const m = (msg || "").toLowerCase();
   if (/(decline|refuse|not accept).*(tender|rfp|bid)|(tender|rfp|bid).*(decline|refuse|not accept)/.test(m))
@@ -59,7 +63,7 @@ function detectLearnerPolicy(msg){
   return null;
 }
 
-/* -------------------- Scenario rules (specific first) ------------------- */
+/* ---------------- Scenarios (specific before intents) ---------------- */
 const SCENARIOS = [
   { id:"tickets_tender", match:/ticket|match|football|game/i, also:/tender|rfp|bid/i,
     variants:[
@@ -80,74 +84,102 @@ const SCENARIOS = [
       "The intermediary asked for offshore payment details. I’ll collect documents if you want to take a view."
     ] }
 ];
+
 function detectScenario(message){
-  for (const sc of SCENARIOS){
-    if (sc.match.test(message) && (!sc.also || sc.also.test(message))) return sc;
-  }
+  for (const sc of SCENARIOS){ if (sc.match.test(message) && (!sc.also || sc.also.test(message))) return sc; }
   return null;
 }
 
-/* -------------------- Intent map (uses your banks) ------------------- */
+/* ---------------- Intent map using banks ---------------- */
 const INTENTS = [
-  {
-    id: "engage",
-    match: /(can we talk|can i ask|can we chat|are you free|got a minute|quick question|can i run something by you)/i,
-    reply: (msg, key) => pickDet(BANK.greetings, key) // warm invite from greeting bank
+  { id: "engage",        match: /(can we talk|can i ask|can we chat|are you free|got a minute|quick question|can i run something by you)/i,
+    reply: (msg,key) => pickDet(BANK.greetings, key),
+    clarify: null
   },
-  {
-    id: "gifts",
-    match: /(gift|hamper|present|bottle|voucher|card)/i,
-    reply: (msg, key) => {
+  { id: "gifts",         match: /(gift|hamper|present|bottle|voucher|card)/i,
+    reply: (msg,key) => {
       if (isDuringTender(msg)) return pickDet(BANK.tender, key);
+      if (mentionsOfficial(msg)) return pickDet(BANK.officials, key);
       const amt = getAmount(msg);
       if (amt && amt > 50) return "Anything above £50 is too much — best to decline kindly.";
-      if (mentionsOfficial(msg)) return pickDet(BANK.officials, key);
       return pickDet(BANK.gifts, key);
+    },
+    clarify: (msg) => {
+      if (!isDuringTender(msg)) return "Is this during a live tender, or in general?";
+      if (!mentionsOfficial(msg)) return "Does this involve a public official?";
+      if (!getAmount(msg)) return "Roughly how much is it worth?";
+      return null;
     }
   },
-  {
-    id: "hospitality",
-    match: /(coffee|lunch|dinner|meal|tickets|event|hospitality)/i,
-    reply: (msg, key) => isDuringTender(msg) ? pickDet(BANK.tender, key) : pickDet(BANK.hospitality, key)
+  { id: "hospitality",   match: /(coffee|lunch|dinner|meal|tickets|event|hospitality)/i,
+    reply: (msg,key) => isDuringTender(msg) ? pickDet(BANK.tender, key) : pickDet(BANK.hospitality, key),
+    clarify: (msg) => {
+      if (!isDuringTender(msg)) return "Is this while a tender is running, or outside of one?";
+      return null;
+    }
   },
-  {
-    id: "officials",
-    match: /(public\s*official|mayor|council|soe|state[-\s]*owned)/i,
-    reply: (msg, key) => pickDet(BANK.officials, key)
+  { id: "officials",     match: /(public\s*official|mayor|council|soe|state[-\s]*owned)/i,
+    reply: (msg,key) => pickDet(BANK.officials, key),
+    clarify: (msg) => (!getAmount(msg) ? "Is it a small token item (around £25 or less)?" : null)
   },
-  {
-    id: "facilitation",
-    match: /(facilitation|speed\s*payment|cash\s*(to|get)\s*speed|extra\s*fee)/i,
-    reply: (msg, key) => pickDet(BANK.facilitation, key)
+  { id: "facilitation",  match: /(facilitation|speed\s*payment|cash\s*(to|get)\s*speed|extra\s*fee)/i,
+    reply: (msg,key) => pickDet(BANK.facilitation, key),
+    clarify: (msg) => /safe|danger|threat|risk/i.test(msg) ? null : "Is there any safety risk if you refuse?"
   },
-  {
-    id: "thirdParties",
-    match: /(agent|intermediary|third\s*party|consultant)/i,
-    reply: (msg, key) => pickDet(BANK.thirdParties, key)
+  { id: "thirdParties",  match: /(agent|intermediary|third\s*party|consultant)/i,
+    reply: (msg,key) => pickDet(BANK.thirdParties, key),
+    clarify: (msg) => /offshore|%|percent|commission|fee/i.test(msg) ? null : "Did they ask for a commission or unusual payment route?"
   },
-  {
-    id: "register",
-    match: /(register|log|record|books)/i,
-    reply: (msg, key) => pickDet(BANK.register, key)
+  { id: "register",      match: /(register|log|record|books)/i,
+    reply: (msg,key) => pickDet(BANK.register, key),
+    clarify: null
   },
-  {
-    id: "travel",
-    match: /(flight|travel|hotel|accommodation|airfare|lodge|book.*(business|economy))/i,
-    reply: (msg, key) => pickDet(BANK.travel, key)
+  { id: "travel",        match: /(flight|travel|hotel|accommodation|airfare|lodge|book.*(business|economy))/i,
+    reply: (msg,key) => pickDet(BANK.travel, key),
+    clarify: (msg) => /(business|economy)/i.test(msg) ? null : "Do you want to keep travel economy and practical?"
   },
-  {
-    id: "donations",
-    match: /(donation|sponsorship|charity|csr)/i,
-    reply: (msg, key) => pickDet(BANK.donations, key)
+  { id: "donations",     match: /(donation|sponsorship|charity|csr)/i,
+    reply: (msg,key) => pickDet(BANK.donations, key),
+    clarify: (msg) => /political/i.test(msg) ? null : "Is this a political donation or general charity support?"
   },
-  {
-    id: "conflicts",
-    match: /(conflict|relative|cousin|family|friend)/i,
-    reply: (msg, key) => pickDet(BANK.conflicts, key)
+  { id: "conflicts",     match: /(conflict|relative|cousin|family|friend)/i,
+    reply: (msg,key) => pickDet(BANK.conflicts, key),
+    clarify: (msg) => /client|supplier|manager/i.test(msg) ? null : "Whose relative is it — client, supplier, or someone internal?"
   }
 ];
 
-/* -------------------- Handler ------------------- */
+/* ---------------- Build response + optional clarifier ---------------- */
+function answerWithOptionalClarifier(message, history){
+  // 1) Scenarios first
+  const sc = detectScenario(message);
+  if (sc){
+    const out = pickDet(sc.variants, message + "|" + lastBetty(history));
+    return tone(out); // scenario replies are already specific; no clarifier
+  }
+
+  // 2) Intents
+  const key = message + "|" + lastBetty(history);
+  for (const it of INTENTS){
+    if (it.match.test(message)){
+      const primary = it.reply(message, key) || "";
+      let clarifier = null;
+
+      // Clarifier appears ONLY when intent has missing critical info
+      if (typeof it.clarify === "function"){
+        clarifier = it.clarify(message);
+      }
+
+      // Format: answer first, then—if needed—ONE short clarifying question
+      const reply = clarifier ? `${primary} ${clarifier}` : primary;
+      return tone(reply);
+    }
+  }
+
+  // 3) Fallback: warm engage from greetings
+  return tone(pickDet(BANK.greetings, "fallback"));
+}
+
+/* ---------------- HTTP Handler ---------------- */
 module.exports = function handler(req, res){
   setCORS(res);
   if (req.method === "OPTIONS") return res.status(200).end();
@@ -165,38 +197,22 @@ module.exports = function handler(req, res){
 
     const message = (body.message || "").toString().trim();
     const history = (body.history || "").toString();
+
     if (!message){
       const opener = pickDet(BANK.persona.openers, "empty");
       return res.status(200).json({ ok: true, reply: tone(opener) });
     }
 
-    // 0) Close if learner states a correct policy/rule
+    // Close warmly if the learner states a correct rule/policy
     const close = detectLearnerPolicy(message);
     if (close){
       const thanks = pickDet(BANK.persona.closes, history.length + "|" + message);
       return res.status(200).json({ ok: true, reply: tone(`${thanks} ${close}`) });
     }
 
-    // 1) Scenario first (most specific)
-    const sc = detectScenario(message);
-    if (sc){
-      const prev = lastBetty(history);
-      const resp = pickDet(sc.variants, message + "|" + prev);
-      return res.status(200).json({ ok: true, reply: tone(resp) });
-    }
-
-    // 2) Intents (answer the actual question/topic)
-    const key = message + "|" + lastBetty(history);
-    for (const intent of INTENTS){
-      if (intent.match.test(message)) {
-        const out = intent.reply(message, key);
-        return res.status(200).json({ ok: true, reply: tone(out) });
-      }
-    }
-
-    // 3) If totally unknown → friendly greeting prompt (bank)
-    const fallback = pickDet(BANK.greetings, "fallback");
-    return res.status(200).json({ ok: true, reply: tone(fallback) });
+    // Answer + (if needed) one clarifier
+    const reply = answerWithOptionalClarifier(message, history);
+    return res.status(200).json({ ok: true, reply });
 
   } catch (e){
     return res.status(200).json({ ok: false, reply: "", error: "Server error processing your message." });
