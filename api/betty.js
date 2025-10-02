@@ -1,5 +1,4 @@
-// /api/betty — Open-chat Betty. Natural, kind, policy-unaware until learner states it.
-// CommonJS + CORS; safe for Vercel buildless functions.
+// /api/betty — Open chat; answers the user's last question directly (CommonJS)
 
 function setCORS(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -24,7 +23,7 @@ const BETTY = {
   ]
 };
 
-// ---------- helpers: tone & variety ----------------------------------------
+// ----------------- tone helpers -----------------
 const MAX_SENTENCES = 4;
 const MAX_CHARS = 380;
 
@@ -32,103 +31,60 @@ function clamp(t, n){ t = (t||"").toString(); return t.length <= n ? t : t.slice
 function toSentences(s){ return (s||"").replace(/\s+/g," ").trim().match(/[^.!?]+[.!?]?/g) || []; }
 function capSentences(s, max){ return toSentences(s).slice(0, max).join(" ").trim(); }
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
-
 function tone(s){
   let out = s || pick(BETTY.openerVariants);
-  // small, occasional human detail
-  if (Math.random() < 0.15 && out.length < 280) out += ` ${pick(BETTY.quirks)}.`;
+  if (Math.random() < 0.12 && out.length < 280) out += ` ${pick(BETTY.quirks)}.`;
   return clamp(capSentences(out, MAX_SENTENCES), MAX_CHARS);
 }
 
-// ---------- policy recognition (conversation closes when true) --------------
+// ----------------- policy close detection -----------------
 function detectLearnerPolicy(msg){
   const m = (msg || "").toLowerCase();
-
-  // 1) Gifts/hospitality during tenders → decline
-  if (/(decline|refuse|not accept).*(tender|rfp|bid)| (tender|rfp|bid).*(decline|refuse|not accept)/.test(m))
-    return "Thanks, I’ll decline anything while a tender is running and we can meet for a simple coffee after the award. I’ll note it properly.";
-
-  // 2) Facilitation payments → refuse; safety exception then report
+  if (/(decline|refuse|not accept).*(tender|rfp|bid)|(tender|rfp|bid).*(decline|refuse|not accept)/.test(m))
+    return "I’ll decline anything while a tender is running and we can meet for a simple coffee after the award. I’ll note it properly.";
   if (/(facilitation|unofficial).*(refuse|decline|do not pay)|refuse.*(facilitation|unofficial)/.test(m))
-    return "Got it. I’ll refuse any ‘speed’ payments; if there’s a genuine safety risk I’ll get out, pay the minimum only if unavoidable, and report straight away.";
-
-  // 3) Third-party/agent offshore commission → pause & escalate due diligence
-  if (/(pause|hold|stop).*(agent|intermediary|third).*|(escalate|compliance|due diligence).*(agent|intermediary|third)/.test(m))
-    return "Understood. I’ll pause and escalate to Compliance for due diligence and transparent paperwork, otherwise we’ll step away.";
-
-  // 4) Public official request/donation → decline & escalate / CSR route
+    return "I’ll refuse any ‘speed’ payments; if there’s a genuine safety risk I’ll step away, pay the minimum only if unavoidable, and report straight away.";
+  if (/(pause|hold|stop).*(agent|intermediary|third)| (escalate|compliance|due diligence).*(agent|intermediary|third)/.test(m))
+    return "I’ll pause and escalate to Compliance for due diligence and transparent paperwork, otherwise we’ll step away.";
   if (/(public official|mayor|council).*(decline|refuse)/.test(m))
-    return "Thanks. I’ll decline the request from the public official and escalate; if we want to help, I’ll suggest a transparent CSR route.";
-
-  // 5) Conflict of interest (client’s cousin) → standard HR, no preference
+    return "I’ll decline the request from the public official and escalate; if we help, I’ll suggest a transparent CSR route.";
   if (/(conflict).*(hr|process)|standard hr|no preferential|no preference/.test(m))
-    return "Will do. I’ll surface the conflict and route it through the standard HR process with no preferential treatment, and record the decision.";
-
-  // 6) Modest gift ~£50 & register
-  if (/(accept|okay|fine).*(£?\s?50|fifty)|log|register|g(&|and)h/.test(m) && /gift|hamper|present|bottle|card|voucher/i.test(m))
-    return "Thanks Detective. I’ll only accept if it’s modest, keep it within limits, and log it in the G&H Register with a polite note.";
-
-  // 7) Public officials token items ≤ £25 + pre-approval
+    return "I’ll surface the conflict and route it through the standard HR process with no preferential treatment, and record the decision.";
+  if (/gift|hamper|present|bottle|card|voucher/i.test(m) && /(accept|okay|fine)/.test(m) && /(£?\s?50|fifty|register|log|g(&|and)h)/.test(m))
+    return "I’ll only accept if it’s modest, keep it within limits, and log it in the G&H Register with a polite note.";
   if (/(public official|official|soe|state).*?(token|small|promo).*?(approval|pre-approval|compliance)/.test(m))
-    return "Understood. For public officials I’ll keep to token items only and get Compliance pre-approval, with a simple distribution list.";
-
-  // 8) Travel economy, bona fide agenda, company-to-company, records
+    return "For public officials I’ll keep to token items only and get Compliance pre-approval, with a simple distribution list.";
   if (/(economy)/.test(m) && /(agenda|bona fide|company.to.company|company-?to-?company|records|receipts)/.test(m))
-    return "Great. I’ll book economy with a clear agenda, keep payments company-to-company, and save tidy records.";
-
+    return "I’ll book economy with a clear agenda, keep payments company-to-company, and save tidy records.";
   return null;
 }
 
-// ---------- scenarios: richer replies without pushing policy ----------------
+// ----------------- scenarios (Betty describes, asks for direction) ----------
 const SCENARIOS = [
-  {
-    key: "tickets_tender",
+  { key: "tickets_tender",
     match: /ticket|match|football|game/i, also: /tender|rfp|bid/i,
-    speak: () =>
-      "A supplier offered football tickets while we’re mid-bid. It feels generous and a bit awkward timing. I could suggest a simple catch-up after the award if you prefer."
-  },
-  {
-    key: "customs_speed_cash",
+    speak: () => "A supplier offered football tickets while we’re mid-bid. I can suggest a simple catch-up after the award if you prefer." },
+  { key: "customs_speed_cash",
     match: /customs|border|shipment/i, also: /cash|speed|fast|quick/i,
-    speak: () =>
-      "Someone at the border hinted £20 would ‘speed things up’. I wasn’t sure that was right. I can ask for the official route or step away if it feels off."
-  },
-  {
-    key: "agent_offshore",
+    speak: () => "Someone at the border hinted £20 would speed things up. I can ask for the official route or step away if it feels off." },
+  { key: "agent_offshore",
     match: /agent|intermediary|consultant/i, also: /offshore|commission|percent|%/i,
-    speak: () =>
-      "An agent wants 15% paid to an offshore account. I can pause it and gather their paperwork if you want to take a look."
-  },
-  {
-    key: "mayor_fund",
+    speak: () => "An agent wants 15% paid to an offshore account. I can pause it and gather their paperwork if you want to look." },
+  { key: "mayor_fund",
     match: /mayor|permit|council|official/i, also: /fund|donation|£|2,?000|2000/i,
-    speak: () =>
-      "The mayor’s office mentioned a £2,000 ‘community fund’ linked to our permit renewal. It made me pause. How would you like me to respond?"
-  },
-  {
-    key: "client_cousin_hire",
+    speak: () => "The mayor’s office mentioned a £2,000 ‘community fund’ linked to our permit. How would you like me to respond?" },
+  { key: "client_cousin_hire",
     match: /hire|cousin|relative|nephew|niece|family/i, also: /client|customer/i,
-    speak: () =>
-      "A client asked us to hire their cousin. I’m happy to pass on the CV and keep the process neat if that helps."
-  },
-  {
-    key: "hamper_30",
+    speak: () => "A client asked us to hire their cousin. I’m happy to pass on the CV and keep the process neat if that helps." },
+  { key: "hamper_30",
     match: /hamper|gift|present|bottle|rioja|voucher|card/i,
-    speak: () =>
-      `A vendor sent a small hamper, roughly £30. I can send thanks and note it, or return it if you’d rather.`
-  },
-  {
-    key: "soe_tote",
+    speak: () => "A vendor sent a small hamper, roughly £30. I can send thanks and note it, or return it if you’d rather." },
+  { key: "soe_tote",
     match: /tote|bag|swag|promo|souvenir/i, also: /soe|state|official|delegates|public/i,
-    speak: () =>
-      "We have simple totes for visitors from a state-owned firm. Happy to hand them out and keep a quick list if you need it."
-  },
-  {
-    key: "business_class",
+    speak: () => "We have simple totes for visitors from a state-owned firm. Happy to hand them out and keep a quick list if you need it." },
+  { key: "business_class",
     match: /flight|travel|hotel|business class|business-class/i,
-    speak: () =>
-      "The team suggested business-class for a prospect visit. I can keep it simple and practical — your call."
-  }
+    speak: () => "The team suggested business-class for a prospect visit. I can keep it simple and practical — your call." }
 ];
 
 function detectScenario(msg){
@@ -138,44 +94,55 @@ function detectScenario(msg){
   return null;
 }
 
-// ---------- free chat (no policy push; friendly & relevant) -----------------
-function smallTalk(msg){
-  return /(hello|hi|hey|morning|afternoon|evening|how are you|how’s it going|how are u)/i.test((msg||""));
-}
-function smallTalkReply(){
-  const starts = [
-    "Hi Detective, I’m good thank you.",
-    "Hello Detective, I’m well, thanks.",
-    "Hi, doing fine today."
-  ];
-  const ends = [
-    "What can I do for you?",
-    "How can I help?",
-    "What would you like to look into?"
-  ];
-  return `${pick(starts)} ${pick(ends)}`;
+// ----------------- direct answers for questions -----------------
+function isQuestion(msg){ return /\?\s*$/.test(msg || ""); }
+
+function directAnswer(msg){
+  const m = (msg||"").toLowerCase();
+
+  // Small talk questions
+  if (/how are you|how’s it going|you ok|are you well/.test(m))
+    return "I’m good, thank you. What would you like me to look into?";
+
+  // Topic questions
+  if (/should.*(accept|take).*(gift|hamper|present|bottle)/.test(m))
+    return `If you’re comfortable with it, I can keep it modest (around £${LIMITS.gift}) and make a note, or I can return it — your call.`;
+  if (/(what|how).*(g(&|and)h|register|log|record)/.test(m))
+    return "I can add a short entry with who, what, rough value and date. Would you like me to do that?";
+  if (/can.*(we|you).*(meet|coffee|lunch|dinner|tickets|event)/.test(m))
+    return "I’m happy with a simple coffee or a low-key meet-up. If timing feels awkward, we can set it after any decisions.";
+  if (/what.*(about|re).*public.*official|mayor|council/.test(m))
+    return "I can keep it very modest and clear, and check with you before giving anything. Do you want me to keep a small list of who gets what?";
+  if (/how.*travel|can.*book.*(business|economy)/.test(m))
+    return "I can keep travel simple and practical; economy works for me. Would you like me to arrange it?";
+  if (/agent|intermediary|third.*party.*(ok|normal|do)/.test(m))
+    return "I can pause to gather their details and paperwork so you can review. Shall I ask them for that?";
+  if (/donation|sponsorship|charity|csr.*(ok|how|can)/.test(m))
+    return "I can ask about a transparent route if you want to support something locally. Do you want me to enquire?";
+
+  // Generic question fallback, but **answer it**, no mirroring
+  return "I can help with that. Tell me how you’d like me to proceed and I’ll do it.";
 }
 
-function looseChat(msg){
+// ----------------- friendly statements (no mirroring/quotes) -----------------
+function friendlyStatementReply(msg){
   const m = (msg||"").toLowerCase();
   if (/travel|flight|hotel|expenses/.test(m))
-    return "I travel now and then for demos and keep plans simple so they’re easy to explain later. Where should we start?";
+    return "I travel now and then for demos and keep plans simple so they’re easy to explain later. What would you like me to set up?";
   if (/client|prospect|meeting|demo/.test(m))
-    return "With clients I like a clear agenda and honest chat so we get to the point. What’s the situation you’re exploring?";
+    return "With clients I like a clear agenda and honest chat so we get to the point. Where shall we start?";
   if (/register|record|log|books/.test(m))
-    return "I’m happy to note things down if you want a record. Tell me what you’d like captured.";
+    return "I can note things down neatly if you want a record. What would you like captured?";
   if (/agent|intermediary|third party|due diligence/.test(m))
-    return "With agents I prefer plain contracts and tidy invoices. I can gather details if you want to review them.";
+    return "I can collect straightforward paperwork and contacts from the agent if you want to review them.";
   if (/donation|sponsorship|charity|csr/.test(m))
     return "If there’s a community angle I can ask the right questions and keep it transparent. How would you like me to put it?";
   if (/conflict|relative|cousin|friend/.test(m))
-    return "If there’s a personal link I’ll mention it openly so everyone is comfortable. What would you like me to do next?";
-  // default mirror
-  const snippet = (msg||"").replace(/\s+/g," ").trim().slice(0,140);
-  return snippet ? `Thanks — I hear you on “${snippet}”. What would you like me to do?` : "I’m listening. What would you like me to do?";
+    return "If there’s a personal link I’ll mention it openly so everyone is comfortable. What should I do next?";
+  return "Happy to help. What would you like me to do?";
 }
 
-// ---------- HTTP handler ----------------------------------------------------
+// ----------------- HTTP handler -----------------
 module.exports = function handler(req, res){
   setCORS(res);
   if (req.method === "OPTIONS") return res.status(200).end();
@@ -196,25 +163,29 @@ module.exports = function handler(req, res){
       return res.status(200).json({ ok: true, reply: tone(pick(BETTY.openerVariants)) });
     }
 
-    // 1) If the learner states a correct policy/rule, close positively.
+    // 1) Close if learner states a correct rule/policy
     const close = detectLearnerPolicy(message);
     if (close){
       return res.status(200).json({ ok: true, reply: tone(`Thanks Detective — that’s clear. ${close}`) });
     }
 
-    // 2) Small talk: natural greeting variants (not a fixed preset)
-    if (smallTalk(message)){
-      return res.status(200).json({ ok: true, reply: tone(smallTalkReply()) });
-    }
-
-    // 3) Scenario phrasing from Betty’s perspective (no policy lecture)
+    // 2) Scenario-specific reply if detected
     const sc = detectScenario(message);
     if (sc){
       return res.status(200).json({ ok: true, reply: tone(sc.speak(message)) });
     }
 
-    // 4) Open, friendly chat relevant to work/life topics
-    return res.status(200).json({ ok: true, reply: tone(looseChat(message)) });
+    // 3) Small talk
+    if (/[?]/.test(message) && /(how are you|how’s it going|you ok|are you well)/i.test(message)){
+      return res.status(200).json({ ok: true, reply: tone("I’m good, thank you. What would you like me to look into?") });
+    }
+
+    // 4) Direct Q&A vs friendly statement (no echoes)
+    if (isQuestion(message)){
+      return res.status(200).json({ ok: true, reply: tone(directAnswer(message)) });
+    } else {
+      return res.status(200).json({ ok: true, reply: tone(friendlyStatementReply(message)) });
+    }
 
   } catch (e){
     return res.status(200).json({ ok: false, reply: "", error: "Server error processing your message." });
