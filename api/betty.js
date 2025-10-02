@@ -1,4 +1,4 @@
-// /api/betty — Persona-rich Betty for FMCG; varied, friendly, a wee bit Scottish, policy closes on learner cue (CommonJS)
+// /api/betty — STRICT deterministic replies: intent-first, no randomness (CommonJS)
 
 function setCORS(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -6,30 +6,17 @@ function setCORS(res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
 }
 
-/* -------------------------- PERSONA CONFIG (customised) -------------------------- */
+/* ---------------- Persona (minimal; flavour removed for consistency) ---------------- */
 const PERSONA = {
   name: "Betty Shaw",
   role: "Sales Executive at Acme Group (FMCG)",
   city: "Glasgow",
-  clients: "public sector, SMEs and enterprise buyers",
-  vibe: ["kind", "polite", "open", "helpful", "calm & steady"],
-  // Light Scottish flavour + life colour; used occasionally
-  details: [
-    "I’m partial to a flat white before client calls",
-    "my desk has colour-coded sticky notes",
-    "I keep a tiny paper diary to track demos",
-    "I try a wee bake on Sundays if the oven behaves",
-    "weekend walks by the Clyde clear my head",
-    "I tidy receipts the minute I’m back from meetings",
-    "I’ll sneak in the odd dad joke if you let me"
-  ],
   openers: [
     "Hi Detective, how can I help?",
     "Hello Detective, what can I do for you today?",
-    "Hiya — happy to chat, what’s on your mind?"
+    "Hi, what would you like to look into?"
   ],
-  // Sign-offs when the learner states correct policy
-  closeThanks: [
+  closes: [
     "Thanks Detective — clear.",
     "Cheers, I’ll do that.",
     "Brilliant — I’m on it."
@@ -37,20 +24,24 @@ const PERSONA = {
 };
 
 const LIMITS = { gift: 50, giftPublicOfficial: 25, hospitality: 200 };
-const MAX_SENTENCES = 4;
-const MAX_CHARS = 380;
+const MAX_SENTENCES = 3;
+const MAX_CHARS = 360;
 
-/* -------------------------- UTILITIES -------------------------- */
+/* ---------------- Utility: deterministic variant picker ---------------- */
 function clamp(t, n){ t = (t||"").toString(); return t.length <= n ? t : t.slice(0, n); }
 function toSentences(s){ return (s||"").replace(/\s+/g," ").trim().match(/[^.!?]+[.!?]?/g) || []; }
 function capSentences(s, max){ return toSentences(s).slice(0, max).join(" ").trim(); }
-function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
-function tone(s){
-  let out = s || pick(PERSONA.openers);
-  // calm & steady cadence, plus occasional wee local detail
-  if (Math.random() < 0.14 && out.length < 280) out += ` ${pick(PERSONA.details)}.`;
-  return clamp(capSentences(out, MAX_SENTENCES), MAX_CHARS);
+function hash(str){
+  let h = 2166136261 >>> 0;
+  for (let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
 }
+function pickDet(arr, key){
+  if (!arr || !arr.length) return "";
+  const idx = key === undefined ? 0 : hash(String(key)) % arr.length;
+  return arr[idx];
+}
+function tone(s){ return clamp(capSentences(s, MAX_SENTENCES), MAX_CHARS); }
 function lastBetty(history) {
   if (!history) return "";
   const lines = history.split(/\r?\n/).reverse();
@@ -60,57 +51,46 @@ function lastBetty(history) {
   }
   return "";
 }
-function chooseDifferent(list, last) {
-  const first = pick(list);
-  if (!last || list.length === 1) return first;
-  let tries = 0, candidate = first;
-  while (candidate.toLowerCase() === last.toLowerCase() && tries < 4) {
-    candidate = pick(list); tries++;
-  }
-  return candidate;
-}
 
-/* -------------------------- CONVERSATION LOGIC -------------------------- */
-
-// Close when the learner states a correct policy/rule
+/* ---------------- Conversation close: learner states correct policy ---------------- */
 function detectLearnerPolicy(msg){
   const m = (msg || "").toLowerCase();
 
   if (/(decline|refuse|not accept).*(tender|rfp|bid)|(tender|rfp|bid).*(decline|refuse|not accept)/.test(m))
-    return `I’ll decline anything during a tender and suggest a simple coffee after the award, then make a quick note.`;
+    return "I’ll decline anything during a tender and suggest a simple coffee after the award, then make a quick note.";
 
   if (/(facilitation|unofficial).*(refuse|decline|do not pay)|refuse.*(facilitation|unofficial)/.test(m))
-    return `I’ll refuse any ‘speed’ payments; if there’s a genuine safety risk I’ll step away, pay the minimum only if unavoidable, and report right away.`;
+    return "I’ll refuse any ‘speed’ payments; if there’s a genuine safety risk I’ll step away, pay the minimum only if unavoidable, and report right away.";
 
   if (/(pause|hold|stop).*(agent|intermediary|third)| (escalate|compliance|due diligence).*(agent|intermediary|third)/.test(m))
-    return `I’ll pause and escalate to Compliance for due diligence and transparent paperwork, otherwise we’ll step away.`;
+    return "I’ll pause and escalate to Compliance for due diligence and transparent paperwork, otherwise we’ll step away.";
 
   if (/(public official|mayor|council).*(decline|refuse)/.test(m))
-    return `I’ll decline the request from the public official and escalate; if we help, I’ll suggest a transparent CSR route.`;
+    return "I’ll decline the request from the public official and escalate; if we help, I’ll suggest a transparent CSR route.";
 
   if (/(conflict).*(hr|process)|standard hr|no preferential|no preference/.test(m))
-    return `I’ll raise the conflict and route it via the standard HR process with no preferential treatment, and record the decision.`;
+    return "I’ll raise the conflict and route it via the standard HR process with no preferential treatment, and record the decision.";
 
   if (/gift|hamper|present|bottle|card|voucher/i.test(m) && /(accept|okay|fine)/.test(m) && /(£?\s?50|fifty|register|log|g(&|and)h)/.test(m))
-    return `I’ll keep any gift modest, within limits, and add it to the G&H Register with a polite note.`;
+    return "I’ll keep any gift modest, within limits, and add it to the G&H Register with a polite note.";
 
   if (/(public official|official|soe|state).*?(token|small|promo).*?(approval|pre-approval|compliance)/.test(m))
-    return `For public officials I’ll keep to token items only, get Compliance pre-approval, and keep a simple distribution list.`;
+    return "For public officials I’ll keep to token items only, get Compliance pre-approval, and keep a simple distribution list.";
 
   if (/(economy)/.test(m) && /(agenda|bona fide|company.to.company|company-?to-?company|records|receipts)/.test(m))
-    return `I’ll book economy with a clear agenda, keep payments company-to-company, and save tidy records.`;
+    return "I’ll book economy with a clear agenda, keep payments company-to-company, and save tidy records.";
 
   return null;
 }
 
-/* -------------------------- SCENARIOS (varied) -------------------------- */
+/* ---------------- Scenarios (deterministic variants) ---------------- */
 const SCENARIOS = [
   { key: "tickets_tender",
     match: /ticket|match|football|game/i, also: /tender|rfp|bid/i,
     variants: [
       "A supplier offered football tickets while we’re mid-bid. The timing feels sensitive; I can suggest a simple catch-up after the award.",
       "I’ve been offered about £180 in match tickets during a live tender. Happy to park hospitality till later if you prefer.",
-      "Tickets popped up while we’re bidding — generous but awkward timing. We could do a wee coffee after the decision instead."
+      "Tickets popped up while we’re bidding — generous but awkward timing. We could meet after the decision instead."
     ]},
   { key: "customs_speed_cash",
     match: /customs|border|shipment/i, also: /cash|speed|fast|quick/i,
@@ -145,7 +125,7 @@ const SCENARIOS = [
     variants: [
       `A vendor sent a small hamper, roughly £30. I can send thanks and note it, or return it if you’d prefer.`,
       "I received a modest gift from a supplier — nothing fancy. I can log it or send it back if you want.",
-      "A wee bottle and some snacks arrived after a demo. I can drop a thank-you and keep it tidy."
+      "A small bottle and some snacks arrived after a demo. I can drop a thank-you and keep it tidy."
     ]},
   { key: "soe_tote",
     match: /tote|bag|swag|promo|souvenir/i, also: /soe|state|official|delegates|public/i,
@@ -170,8 +150,8 @@ function detectScenario(msg){
   return null;
 }
 
-/* -------------------------- INTENT BANKS (varied) -------------------------- */
-const ANSWERS = {
+/* ---------------- Intent banks (deterministic) ---------------- */
+const A = {
   engage: [
     "Of course — go ahead. What’s on your mind?",
     "Sure thing, Detective. Fire away.",
@@ -181,13 +161,6 @@ const ANSWERS = {
     "I’m good, thank you. What would you like me to look into?",
     "All well here, thanks. What shall we talk through?",
     "Doing fine today — how can I help?"
-  ],
-  // small talk extras themed to your preferences
-  smalltalkExtras: [
-    "Had a wee wander at the weekend — fresh air helps the sales brain.",
-    "Trying a new scone recipe later, wish me luck.",
-    "Caught the football highlights — still not over that miss.",
-    "The dog tried to eat my sticky notes again."
   ],
   gifts: [
     `If you’re comfortable, I’ll keep it modest (around £${LIMITS.gift}) and make a short note.`,
@@ -253,73 +226,65 @@ const ANSWERS = {
     "Understood.",
     "Thanks for that.",
     "Got it."
-  ],
-  // wee dad-joke (rare; fun toggle)
-  dadJokes: [
-    "I told my team I was two-tired after a long drive — they said that’s a wheelie bad joke.",
-    "I tried baking bread for a client demo — it didn’t rise to the occasion."
   ]
 };
 
-function maybeAddColour(line){
-  // 20% chance of adding a wee extra detail, 5% chance of a dad joke
-  if (Math.random() < 0.05) return `${line} ${pick(ANSWERS.dadJokes)}`
-  if (Math.random() < 0.20) return `${line} ${pick(ANSWERS.smalltalkExtras)}`
-  return line;
-}
-
-/* -------------------------- RESPONDERS -------------------------- */
+/* ---------------- Deterministic responders ---------------- */
 function answerQuestion(msg, last) {
   const m = (msg || "").toLowerCase();
+  const key = msg + "|" + last;
 
   if (/(can we talk|can i ask|can we chat|are you free|got a minute|quick question|can i run something by you)/i.test(m))
-    return chooseDifferent(ANSWERS.engage, last);
+    return pickDet(A.engage, key);
 
   if (/how are you|how’s it going|you ok|are you well/.test(m))
-    return chooseDifferent(ANSWERS.smalltalk, last);
+    return pickDet(A.smalltalk, key);
 
   if (/should.*(accept|take).*(gift|hamper|present|bottle|voucher|card)/.test(m))
-    return chooseDifferent(ANSWERS.gifts, last);
+    return pickDet(A.gifts, key);
 
   if (/(what|how).*(g(&|and)h|register|log|record)/.test(m))
-    return chooseDifferent(ANSWERS.register, last);
+    return pickDet(A.register, key);
 
   if (/can.*(we|you).*(meet|coffee|lunch|dinner|tickets|event)/.test(m))
-    return chooseDifferent(ANSWERS.hospitality, last);
+    return pickDet(A.hospitality, key);
 
   if (/(what|how).*(public.*official|mayor|council)/.test(m))
-    return chooseDifferent(ANSWERS.officials, last);
+    return pickDet(A.officials, key);
 
   if (/how.*travel|can.*book.*(business|economy)/.test(m))
-    return chooseDifferent(ANSWERS.travel, last);
+    return pickDet(A.travel, key);
 
   if (/agent|intermediary|third.*party.*(ok|normal|do|should)/.test(m))
-    return chooseDifferent(ANSWERS.thirdparty, last);
+    return pickDet(A.thirdparty, key);
 
   if (/donation|sponsorship|charity|csr.*(ok|how|can|should)/.test(m))
-    return chooseDifferent(ANSWERS.donations, last);
+    return pickDet(A.donations, key);
 
-  return chooseDifferent(ANSWERS.genericQ, last);
+  return pickDet(A.genericQ, key);
 }
 
 function replyToStatement(msg, last) {
   const m = (msg||"").toLowerCase();
-  if (/client|prospect|meeting|demo/.test(m))      return chooseDifferent(ANSWERS.clients, last);
-  if (/register|record|log|books/.test(m))         return chooseDifferent(ANSWERS.records, last);
-  if (/agent|intermediary|third party/.test(m))    return chooseDifferent(ANSWERS.agentInfo, last);
-  if (/conflict|relative|cousin|friend/.test(m))   return chooseDifferent(ANSWERS.conflict, last);
-  if (/travel|flight|hotel|expenses/.test(m))      return chooseDifferent(ANSWERS.travel, last);
-  if (/donation|sponsorship|charity|csr/.test(m))  return chooseDifferent(ANSWERS.donations, last);
-  return chooseDifferent(ANSWERS.genericS, last);
+  const key = msg + "|" + last;
+
+  if (/client|prospect|meeting|demo/.test(m))      return pickDet(A.clients, key);
+  if (/register|record|log|books/.test(m))         return pickDet(A.records, key);
+  if (/agent|intermediary|third party/.test(m))    return pickDet(A.agentInfo, key);
+  if (/conflict|relative|cousin|friend/.test(m))   return pickDet(A.conflict, key);
+  if (/travel|flight|hotel|expenses/.test(m))      return pickDet(A.travel, key);
+  if (/donation|sponsorship|charity|csr/.test(m))  return pickDet(A.donations, key);
+
+  return pickDet(A.genericS, key);
 }
 
-/* -------------------------- HTTP HANDLER -------------------------- */
+/* ---------------- HTTP Handler ---------------- */
 module.exports = function handler(req, res){
   setCORS(res);
   if (req.method === "OPTIONS") return res.status(200).end();
 
   if (req.method === "GET"){
-    return res.status(200).json({ ok: true, reply: pick(PERSONA.openers) });
+    return res.status(200).json({ ok: true, reply: pickDet(PERSONA.openers, "get") });
   }
   if (req.method !== "POST"){
     return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -332,31 +297,31 @@ module.exports = function handler(req, res){
     const message  = (body.message || "").toString().trim();
     const history  = (body.history || "").toString();
     if (!message){
-      return res.status(200).json({ ok: true, reply: tone(pick(PERSONA.openers)) });
+      return res.status(200).json({ ok: true, reply: tone(pickDet(PERSONA.openers, "empty")) });
     }
 
-    // 0) If learner states a correct rule/policy → warm close
+    // 0) Close if learner states a correct rule/policy
     const close = detectLearnerPolicy(message);
     if (close){
-      const thanks = pick(PERSONA.closeThanks);
+      const thanks = pickDet(PERSONA.closes, history.length + "|" + message);
       return res.status(200).json({ ok: true, reply: tone(`${thanks} ${close}`) });
     }
 
-    // 1) Scenario-specific variety
+    // 1) Scenario first (most specific)
     const sc = detectScenario(message);
     if (sc){
       const prev = lastBetty(history);
-      const base = chooseDifferent(sc.variants, prev);
-      return res.status(200).json({ ok: true, reply: tone(maybeAddColour(base)) });
+      const resp = pickDet(sc.variants, message + "|" + prev);
+      return res.status(200).json({ ok: true, reply: tone(resp) });
     }
 
-    // 2) Direct Q&A vs statement, both with topic-aware variant banks
+    // 2) Question vs statement with deterministic, topic-aware answers
     const prevBetty = lastBetty(history);
-    const base = /\?\s*$/.test(message)
+    const reply = /\?\s*$/.test(message)
       ? answerQuestion(message, prevBetty)
       : replyToStatement(message, prevBetty);
 
-    return res.status(200).json({ ok: true, reply: tone(maybeAddColour(base)) });
+    return res.status(200).json({ ok: true, reply: tone(reply) });
 
   } catch (e){
     return res.status(200).json({ ok: false, reply: "", error: "Server error processing your message." });
