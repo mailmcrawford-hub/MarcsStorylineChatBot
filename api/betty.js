@@ -1,4 +1,4 @@
-// /api/betty — Betty persona + probes + conversational fallback (CommonJS)
+// /api/betty — Freer Betty persona (CommonJS). Chatty, UK tone, still ABC-relevant.
 
 function setCORS(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -17,108 +17,100 @@ const BETTY = {
     "I’m partial to a flat white before client calls",
     "I once logged a small hamper after a demo, just to be safe"
   ],
-  opener: "Hi, I’m Betty from Acme. Ask me about gifts, hospitality or ABC."
+  opener: "Hi, I’m Betty from Acme. Happy to chat through gifts, hospitality and ABC."
 };
 
+// --- Scenarios (same topics, but more conversational copy) -----------------
 const SCENARIOS = [
   {
     key: "tickets_tender",
     match: /ticket|match|football|game/i,
     also: /tender|rfp|bid/i,
-    probes: [
-      "It’s during a live tender and about £180—what risk do you see?",
-      "If I wanted to keep the relationship warm, what compliant alternative could I suggest?"
-    ],
-    expectPolicy: (msg) => /decline|refus(e|al)|do not accept/i.test(msg) && /(tender|rfp|bid)/i.test(msg),
-    positiveClose: "Agreed. We decline anything during tenders; a simple coffee after the award is fine, and we log it in the G&H Register."
+    chat: (m) =>
+      "Football tickets during a live tender raise eyebrows, mainly the perception we’re being influenced. I usually park hospitality until the award, then offer a low-key coffee or a short catch-up and log it properly.",
+    ask: "What would you do with the offer in your case?"
   },
   {
     key: "customs_speed_cash",
     match: /customs|border|shipment/i,
     also: /cash|speed|fast|quick/i,
-    probes: [
-      "They asked for £20 to ‘speed it up’—what does policy call that?",
-      "If there’s no safety risk, what should I do instead?"
-    ],
-    expectPolicy: (msg) => /(facilitation|unofficial)/i.test(msg) && /(refuse|decline|do not pay)/i.test(msg),
-    positiveClose: "Right. It’s a facilitation payment—we refuse and ask for the official process; only pay the minimum if there’s a true safety risk and report within 24 hours."
+    chat: () =>
+      "Those little ‘speed’ requests at borders crop up now and then. I ask for the official process or a receipt; if there’s any hint of safety risk, I get out and escalate, and only pay the bare minimum if it’s truly unavoidable then report it quickly.",
+    ask: "How would you steer that conversation at the counter?"
   },
   {
     key: "agent_offshore",
     match: /agent|intermediary|consultant/i,
     also: /offshore|commission|percent|%/i,
-    probes: [
-      "They want 15% to an offshore entity—what’s our first step?",
-      "What paperwork would make it transparent?"
-    ],
-    expectPolicy: (msg) => /(pause|hold|stop)/i.test(msg) && /(escalate|compliance|due diligence)/i.test(msg),
-    positiveClose: "Yes. We pause and escalate to Compliance for due diligence and a transparent contract with proper invoices, or we disengage."
+    chat: () =>
+      "An offshore commission needs a pause. We do risk-based due diligence, make the scope clear, and pay a named company to a normal account against proper invoices. If that can’t be satisfied, we walk away.",
+    ask: "What checks would you want me to run first?"
   },
   {
     key: "mayor_fund",
     match: /mayor|permit|council|official/i,
     also: /fund|donation|£|2,?000|2000/i,
-    probes: [
-      "It’s tied to a permit by a public official—what’s the issue?",
-      "If we want to help the community, what compliant route works?"
-    ],
-    expectPolicy: (msg) => /(decline|refuse)/i.test(msg) && /(public official|official)/i.test(msg),
-    positiveClose: "Correct. We decline and escalate; a compliant CSR route is the alternative."
+    chat: () =>
+      "Money linked to a permit from a public official is a red flag. I’d decline and escalate; if we want to support the community we do it as a transparent CSR activity, not tied to a decision.",
+    ask: "How would you frame the decline so it stays professional?"
   },
   {
     key: "client_cousin_hire",
     match: /hire|cousin|relative|nephew|niece|family/i,
     also: /client|customer/i,
-    probes: [
-      "They’re nudging to hire a cousin—what risk is that?",
-      "How do we keep the decision clean?"
-    ],
-    expectPolicy: (msg) => /(conflict)/i.test(msg) && /(standard|normal)\s*hr|hr process|no preferential/i.test(msg),
-    positiveClose: "Exactly. It’s a conflict risk—use the standard HR process with no preferential treatment and document the decision."
+    chat: () =>
+      "A client pushing a relative can look like a sweetener. I call out the conflict, route the role through normal HR, and document the decision so it’s fair and based on merit.",
+    ask: "What would you tell the client so expectations stay clear?"
   },
   {
     key: "hamper_30",
     match: /hamper|gift|present|bottle|rioja|voucher|card/i,
-    probes: [
-      "It’s about £30 and no live tender—what limits apply?",
-      "If I accept, what admin step follows?"
-    ],
-    expectPolicy: (msg) => /(accept|okay|fine)/i.test(msg) && /(limit|£?50|fifty)/i.test(msg) && /(register|log|g(&|and)h)/i.test(msg),
-    positiveClose: "Spot on. Acceptable within limits (≤ £50), not during tenders, and we log it in the G&H Register with a polite policy-aware thanks."
+    chat: () =>
+      `A small hamper around £30 is usually fine if there's no tender running and no intent to sway us. I thank them, keep it modest, and log it in the G&H Register so our books stay tidy.`,
+    ask: "Would you accept in your example, or prefer I return it?"
   },
   {
     key: "soe_tote",
     match: /tote|bag|swag|promo|souvenir/i,
     also: /soe|state|official|delegates|public/i,
-    probes: [
-      "Token items for delegates—what extra step applies to public officials?",
-      "How do we track distribution?"
-    ],
-    expectPolicy: (msg) => /(pre-?approval|approval)/i.test(msg) && /(compliance)/i.test(msg),
-    positiveClose: "Yes. Token items for public officials need Compliance pre-approval and a simple distribution list."
+    chat: () =>
+      "For public officials we keep to token items, like simple totes or pens, and we get Compliance pre-approval. A short distribution list helps if anyone asks later.",
+    ask: "What would you want captured on that list?"
   },
   {
     key: "business_class",
     match: /flight|travel|hotel|business class|business-class/i,
-    probes: [
-      "They proposed business-class to impress a prospect—what’s our travel standard?",
-      "What else keeps the spend bona fide?"
-    ],
-    expectPolicy: (msg) => /(economy)/i.test(msg) && /(bona fide|agenda|company-?to-?company|records|record)/i.test(msg),
-    positiveClose: "Correct. We stick to economy, ensure a bona fide agenda, use company-to-company payments, and keep accurate records."
+    chat: () =>
+      "For travel I stick to economy and a clear business agenda. Company-to-company payment and neat receipts keep it clean and easy to justify.",
+    ask: "How strict would you be on exceptions, say for medical needs?"
   }
 ];
 
 // ---------- utilities ----------
+const MAX_SENTENCES = 4;
+const MAX_CHARS = 400;
+
 function clamp(text, n) { text = (text || "").toString(); return text.length <= n ? text : text.slice(0, n); }
-function capSentences(s, max) { const parts = (s||"").replace(/\s+/g," ").trim().match(/[^.!?]+[.!?]?/g)||[s||""]; return parts.slice(0,max).join(" ").trim(); }
+function toSentences(s) { return (s||"").replace(/\s+/g," ").trim().match(/[^.!?]+[.!?]?/g) || []; }
+function capSentences(s, max) { return toSentences(s).slice(0, max).join(" ").trim(); }
+
+function cleanQuote(msg) {
+  // Reduce odd echoes like “what was worth”
+  return (msg || "")
+    .replace(/["“”]+/g, "")
+    .replace(/[^a-z0-9£\s.,!?()-]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function bettyTone(s) {
+  // Freer, warmer tone; may add a small human detail occasionally
   let out = s || BETTY.opener;
-  if (Math.random() < 0.25 && out.length < 180) {
+  if (Math.random() < 0.2 && out.length < 280) {
     const q = BETTY.quirks[Math.floor(Math.random()*BETTY.quirks.length)];
-    out += `. ${q}.`;
+    out += ` ${q}.`;
   }
-  return clamp(capSentences(out, 2), 240);
+  return clamp(capSentences(out, MAX_SENTENCES), MAX_CHARS);
 }
 
 function detectScenario(msg) {
@@ -127,74 +119,58 @@ function detectScenario(msg) {
   }
   return null;
 }
+
 function turnsSoFar(history) {
   if (!history) return 0;
-  return Math.max(0, Math.min(history.split(/\r?\n/).filter(l => /^You:\s/i.test(l)).length, 6));
+  return Math.max(0, Math.min(history.split(/\r?\n/).filter(l => /^You:\s/i.test(l)).length, 10));
 }
+
+// ---------- conversational replies ----------
+function smallTalk(msg) {
+  const m = msg.toLowerCase();
+  return /(hello|hi|morning|afternoon|how are you|who are you|your role|where.*from)/i.test(m);
+}
+function smallTalkReply() {
+  return "Hello! I’m Betty in Sales up in Manchester. Ask away and I’ll keep it practical and policy-aware.";
+}
+
+function looseTopicReply(msg) {
+  const m = msg.toLowerCase();
+  if (/travel|flight|hotel|expenses/.test(m))
+    return "I travel for demos a fair bit; keeping it economy with tidy receipts makes life easier if anyone asks later.";
+  if (/client|prospect|meeting|demo/.test(m))
+    return "Clients like a clear agenda and next steps. I keep hospitality modest so it doesn’t distract from the work.";
+  if (/register|record|log|books/.test(m))
+    return "I log items of value in the G&H Register—takes seconds and saves questions down the line.";
+  if (/agent|intermediary|third party|due diligence/.test(m))
+    return "With third parties I like simple scopes, due diligence, and clean invoices to a normal account.";
+  if (/donation|sponsorship|charity|csr/.test(m))
+    return "Donations go through Compliance and to organisations, not people; it keeps motives clear.";
+  if (/conflict|relative|cousin|friend/.test(m))
+    return "If there’s a personal link, I surface the conflict early and let the standard process do its thing.";
+  return null;
+}
+
+function conversationalFallback(msg) {
+  const cleaned = cleanQuote(msg);
+  const echo = cleaned ? `On “${cleaned}”, ` : "";
+  const base = looseTopicReply(msg) ||
+    "from experience I keep things modest, logged and transparent so decisions stand on their own merits.";
+  // Only sometimes add a question to keep flow natural
+  const maybeQ = Math.random() < 0.5 ? " What would you do in that situation?" : "";
+  return `${echo}${base}${maybeQ}`;
+}
+
+// ---------- scenario flow (more relaxed) ----------
 function scenarioFlow(sc, userMsg, history) {
   const t = turnsSoFar(history);
-  if (sc.expectPolicy(userMsg)) return sc.positiveClose;
-  if (t <= 0) return sc.probes[0];
-  if (t === 1) return sc.probes[1] || "What risk do you see under policy?";
-  if (t === 2) return "What should I do according to policy?";
-  return "Nearly there—what does our policy say to do in this case?";
-}
-
-// ---------- conversational fallback (replaces bland generic line) ----------
-function topicCategory(msg) {
-  const m = msg.toLowerCase();
-  if (/voucher|cash|gift card|crypto/.test(m)) return "cash_like";
-  if (/gift|hamper|present|bottle|rioja/.test(m)) return "gift";
-  if (/hospitality|dinner|lunch|tickets|event/.test(m)) return "hospitality";
-  if (/public official|mayor|council|soe|state/.test(m)) return "public_official";
-  if (/tender|rfp|bid/.test(m)) return "tender";
-  if (/register|log|record|books/.test(m)) return "records";
-  if (/due diligence|onboard|third party|agent|intermediary/.test(m)) return "third_party";
-  if (/travel|flight|hotel|expenses/.test(m)) return "travel";
-  if (/donation|sponsorship|charity|csr/.test(m)) return "donations";
-  if (/conflict|relative|cousin|friend/.test(m)) return "conflict";
-  return "misc";
-}
-
-function summarise(msg) {
-  const words = (msg || "").toLowerCase().replace(/[^a-z0-9£\s]/g,"").split(/\s+/).filter(w => w && w.length > 2);
-  const keep = [];
-  for (const w of words) {
-    if (keep.indexOf(w) === -1 && keep.length < 5) keep.push(w);
-  }
-  return keep.join(" ");
-}
-
-function conversationalReply(msg) {
-  const cat = topicCategory(msg);
-  switch (cat) {
-    case "cash_like":
-      return "Cash or cash-equivalent gifts are off limits; I steer to a modest, transparent option or decline. What policy bit would you apply here?";
-    case "gift":
-      return `Small gifts can be okay if not influencing anything and ≤ £${LIMITS.gift}; we log them. What would you have me do in your case?`;
-    case "hospitality":
-      return `Hospitality must be reasonable and ≤ £${LIMITS.hospitality} per person; not during live tenders. What’s the compliant next step?`;
-    case "public_official":
-      return "With public officials we keep to token items only (≤ £25) with Compliance pre-approval. How would you guide me here?";
-    case "tender":
-      return "During tenders we avoid gifts or hospitality altogether to remove doubt. What would you advise me to do?";
-    case "records":
-      return "I keep the G&H Register tidy so our books are accurate. What should I record in your scenario?";
-    case "third_party":
-      return "With agents we do risk-based due diligence and clear contracts. What safeguard would you want first?";
-    case "travel":
-      return "I stick to economy and keep receipts neat; it keeps spend bona fide. What policy point matters most here?";
-    case "donations":
-      return "Donations need Compliance pre-approval and go to organisations, not people. What would you recommend I do?";
-    case "conflict":
-      return "Where there’s a personal link, I call out the conflict and route via the standard process. What’s your direction for me?";
-    default: {
-      const hint = summarise(msg);
-      return hint
-        ? `I hear you on "${hint}". From a practical view I keep things modest, logged and transparent. What does policy say I should do?`
-        : "Happy to chat from experience. What does policy say I should do here?";
-    }
-  }
+  // Stage 0: share context freely
+  if (t <= 0) return sc.chat(userMsg);
+  // Stage 1: add detail + invite the learner
+  if (t === 1) return sc.chat(userMsg) + " " + sc.ask;
+  // Stage 2+: keep it conversational; ask once in a while
+  if (t % 2 === 0) return sc.chat(userMsg);
+  return sc.ask;
 }
 
 // ---------- HTTP handler ----------
@@ -203,7 +179,7 @@ module.exports = function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
 
   if (req.method === "GET") {
-    return res.status(200).json({ ok: true, reply: `${BETTY.opener}` });
+    return res.status(200).json({ ok: true, reply: BETTY.opener });
   }
   if (req.method !== "POST") {
     return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -220,16 +196,18 @@ module.exports = function handler(req, res) {
       return res.status(200).json({ ok: true, reply: bettyTone(BETTY.opener) });
     }
 
-    // 1) Scenario flow (with probes and positive close when learner states policy)
+    if (smallTalk(message)) {
+      return res.status(200).json({ ok: true, reply: bettyTone(smallTalkReply()) });
+    }
+
     const sc = detectScenario(message);
     if (sc) {
       const reply = scenarioFlow(sc, message, history);
       return res.status(200).json({ ok: true, reply: bettyTone(reply) });
     }
 
-    // 2) Conversational fallback (reflect + brief answer + nudge)
-    const talk = conversationalReply(message);
-    return res.status(200).json({ ok: true, reply: bettyTone(talk) });
+    const reply = conversationalFallback(message);
+    return res.status(200).json({ ok: true, reply: bettyTone(reply) });
 
   } catch (e) {
     return res.status(200).json({ ok: false, reply: "", error: "Server error processing your message." });
