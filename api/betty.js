@@ -1,4 +1,4 @@
-// /api/betty — Open chat v2: direct, topic-aware answers; no generic fallback loops (CommonJS)
+// /api/betty — Open chat v3: topic-aware answers, no bland fillers (CommonJS)
 
 function setCORS(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -36,7 +36,7 @@ function tone(s){
   return clamp(capSentences(out, MAX_SENTENCES), MAX_CHARS);
 }
 
-// ---------- pull the last thing Betty said to avoid repeats ----------
+// ---- last Betty line (to avoid repeating exact same wording) ----
 function lastBetty(history) {
   if (!history) return "";
   const lines = history.split(/\r?\n/).reverse();
@@ -47,7 +47,7 @@ function lastBetty(history) {
   return "";
 }
 
-// ---------- policy close detection ----------
+// ---- conversation ends when learner states a correct policy ----
 function detectLearnerPolicy(msg){
   const m = (msg || "").toLowerCase();
   if (/(decline|refuse|not accept).*(tender|rfp|bid)|(tender|rfp|bid).*(decline|refuse|not accept)/.test(m))
@@ -69,7 +69,7 @@ function detectLearnerPolicy(msg){
   return null;
 }
 
-// ---------- scenarios (Betty describes neutrally, asks for direction only if asked) ----------
+// ---- scenarios (for richer context) ----
 const SCENARIOS = [
   { key: "tickets_tender",
     match: /ticket|match|football|game/i, also: /tender|rfp|bid/i,
@@ -104,94 +104,103 @@ function detectScenario(msg){
   return null;
 }
 
-// ---------- direct answers for questions (topic-aware, varied, no “tell me how”) ----------
-function answerQuestion(msg){
-  const m = (msg||"").toLowerCase();
-
-  // Small talk
-  if (/how are you|how’s it going|you ok|are you well/.test(m))
-    return pick(["I’m good, thank you.", "All well here, thanks.", "Doing fine today, thanks."]);
-
-  // Gifts
-  if (/should.*(accept|take).*(gift|hamper|present|bottle|voucher|card)/.test(m))
-    return pick([
-      `If you’re comfortable, I’ll keep it modest (around £${LIMITS.gift}) and make a short note.`,
-      "I can send thanks and keep it simple, or return it if you’d rather.",
-      "Happy to accept if it’s small and sensible, otherwise I’ll decline politely."
-    ]);
-
-  // Register / records
-  if (/(what|how).*(g(&|and)h|register|log|record)/.test(m))
-    return pick([
-      "I’ll note who it was from, a brief description, rough value and the date.",
-      "I can add a short entry with names, item, estimate and when it happened.",
-      "I’ll keep a neat line in the register so it’s easy to check later."
-    ]);
-
-  // Meetings / hospitality
-  if (/can.*(we|you).*(meet|coffee|lunch|dinner|tickets|event)/.test(m))
-    return pick([
-      "A simple coffee works well; I’ll keep it low-key.",
-      "Yes, I can set up a short catch-up that feels comfortable.",
-      "Happy to meet — I’ll keep it straightforward."
-    ]);
-
-  // Public officials
-  if (/(what|how).*(public.*official|mayor|council)/.test(m))
-    return pick([
-      "I’ll keep it very modest and clear, and check with you before giving anything.",
-      "I can keep it token-level and make sure it’s transparent.",
-      "Happy to keep it simple and documented if needed."
-    ]);
-
-  // Travel
-  if (/how.*travel|can.*book.*(business|economy)/.test(m))
-    return pick([
-      "I can keep travel simple — economy is fine.",
-      "I’ll book something practical and tidy on receipts.",
-      "Happy with economy and a clear agenda."
-    ]);
-
-  // Third parties
-  if (/agent|intermediary|third.*party.*(ok|normal|do|should)/.test(m))
-    return pick([
-      "I can pause and gather their details and paperwork.",
-      "I’ll ask for a straightforward contract and invoices for you to review.",
-      "Happy to collect the basics so you can take a view."
-    ]);
-
-  // Donations / sponsorship
-  if (/donation|sponsorship|charity|csr.*(ok|how|can|should)/.test(m))
-    return pick([
-      "I can enquire about a transparent route if you want to support something locally.",
-      "Happy to ask a few questions and keep it above board.",
-      "I’ll check options and keep it tidy."
-    ]);
-
-  // Generic question → give a helpful answer, not a deflection
-  return pick([
+// ---- topic-aware answers (two variants each to avoid repeats) ----
+const ANSWERS = {
+  smalltalk: [
+    "I’m good, thank you. What would you like me to look into?",
+    "All well here, thanks. What shall we talk through?"
+  ],
+  gifts: [
+    `If you’re comfortable, I’ll keep it modest (around £${LIMITS.gift}) and make a short note.`,
+    "I can send thanks and keep it simple, or return it if you’d rather."
+  ],
+  register: [
+    "I’ll note who it was from, a brief description, rough value and the date.",
+    "I can add a short entry with names, item, estimate and when it happened."
+  ],
+  hospitality: [
+    "A simple coffee works well; I’ll keep it low-key.",
+    "Yes, I can set up a short catch-up that feels comfortable."
+  ],
+  officials: [
+    "I’ll keep it very modest and clear, and check with you before giving anything.",
+    "I can keep it token-level and make sure it’s transparent."
+  ],
+  travel: [
+    "I can keep travel simple — economy is fine.",
+    "I’ll book something practical and tidy on receipts."
+  ],
+  thirdparty: [
+    "I can pause and gather their details and paperwork.",
+    "I’ll ask for a straightforward contract and invoices for you to review."
+  ],
+  donations: [
+    "I can enquire about a transparent route if you want to support something locally.",
+    "Happy to ask a few questions and keep it above board."
+  ],
+  genericQ: [
     "I can handle that and keep it straightforward.",
-    "Happy to do that and keep it neat.",
-    "I can sort that and keep things simple."
-  ]);
+    "Happy to do that and keep it neat."
+  ],
+  clients: [
+    "I like a clear agenda so we get to the point.",
+    "Happy to keep meetings focused and friendly."
+  ],
+  records: [
+    "I’ll keep notes neat so they’re easy to check later.",
+    "I can add concise entries to the register."
+  ],
+  agentInfo: [
+    "I’ll collect straightforward paperwork from the agent.",
+    "I can ask for simple details and contacts to review."
+  ],
+  conflict: [
+    "I’ll mention any personal link openly so everyone’s comfortable.",
+    "I’ll flag the connection so decisions stay clean."
+  ],
+  genericS: [
+    "Understood.",
+    "Thanks for that."
+  ]
+};
+
+function chooseDifferent(pair, last) {
+  // pick the variant that isn't equal to the last Betty line
+  const [a,b] = pair;
+  if (!last) return a;
+  return (last.toLowerCase() === a.toLowerCase()) ? b : a;
 }
 
-// ---------- friendly statements (no echoes; never ask for direction unless asked) ----------
-function replyToStatement(msg){
+function answerQuestion(msg, last) {
   const m = (msg||"").toLowerCase();
-  if (/travel|flight|hotel|expenses/.test(m))
-    return pick(["I travel for demos now and then and keep plans simple.", "I’ll keep bookings practical and tidy on receipts."]);
-  if (/client|prospect|meeting|demo/.test(m))
-    return pick(["I like a clear agenda so we get to the point.", "Happy to keep meetings focused and friendly."]);
-  if (/register|record|log|books/.test(m))
-    return pick(["I’ll keep notes neat so they’re easy to check later.", "I can add concise entries to the register."]);
-  if (/agent|intermediary|third party|due diligence/.test(m))
-    return pick(["I’ll collect straightforward paperwork from the agent.", "I can ask for simple details and contacts to review."]);
-  if (/donation|sponsorship|charity|csr/.test(m))
-    return pick(["I’ll enquire politely and keep it transparent.", "Happy to check options and keep it above board."]);
-  if (/conflict|relative|cousin|friend/.test(m))
-    return pick(["I’ll mention any personal link openly so everyone’s comfortable.", "I’ll flag the connection so decisions stay clean."]);
-  return pick(["Understood.", "Got it.", "Thanks for that."]);
+  if (/how are you|how’s it going|you ok|are you well/.test(m))
+    return chooseDifferent(ANSWERS.smalltalk, last);
+  if (/should.*(accept|take).*(gift|hamper|present|bottle|voucher|card)/.test(m))
+    return chooseDifferent(ANSWERS.gifts, last);
+  if (/(what|how).*(g(&|and)h|register|log|record)/.test(m))
+    return chooseDifferent(ANSWERS.register, last);
+  if (/can.*(we|you).*(meet|coffee|lunch|dinner|tickets|event)/.test(m))
+    return chooseDifferent(ANSWERS.hospitality, last);
+  if (/(what|how).*(public.*official|mayor|council)/.test(m))
+    return chooseDifferent(ANSWERS.officials, last);
+  if (/how.*travel|can.*book.*(business|economy)/.test(m))
+    return chooseDifferent(ANSWERS.travel, last);
+  if (/agent|intermediary|third.*party.*(ok|normal|do|should)/.test(m))
+    return chooseDifferent(ANSWERS.thirdparty, last);
+  if (/donation|sponsorship|charity|csr.*(ok|how|can|should)/.test(m))
+    return chooseDifferent(ANSWERS.donations, last);
+  return chooseDifferent(ANSWERS.genericQ, last);
+}
+
+function replyToStatement(msg, last) {
+  const m = (msg||"").toLowerCase();
+  if (/client|prospect|meeting|demo/.test(m))      return chooseDifferent(ANSWERS.clients, last);
+  if (/register|record|log|books/.test(m))         return chooseDifferent(ANSWERS.records, last);
+  if (/agent|intermediary|third party/.test(m))    return chooseDifferent(ANSWERS.agentInfo, last);
+  if (/conflict|relative|cousin|friend/.test(m))   return chooseDifferent(ANSWERS.conflict, last);
+  if (/travel|flight|hotel|expenses/.test(m))      return chooseDifferent(ANSWERS.travel, last);
+  if (/donation|sponsorship|charity|csr/.test(m))  return chooseDifferent(ANSWERS.donations, last);
+  return chooseDifferent(ANSWERS.genericS, last);
 }
 
 // ----------------- HTTP handler -----------------
@@ -216,37 +225,28 @@ module.exports = function handler(req, res){
       return res.status(200).json({ ok: true, reply: tone(pick(BETTY.openerVariants)) });
     }
 
-    // 0) If the learner states a correct rule/policy → warm close
+    // Close if learner states a correct rule/policy
     const close = detectLearnerPolicy(message);
     if (close){
-      const final = "Thanks Detective — that’s clear. " + close;
-      return res.status(200).json({ ok: true, reply: tone(final) });
+      return res.status(200).json({ ok: true, reply: tone("Thanks Detective — that’s clear. " + close) });
     }
 
-    // 1) Scenario-specific if matched
+    // Scenario-specific context if matched
     const sc = detectScenario(message);
     if (sc){
       let resp = sc.speak(message);
       const prev = lastBetty(history);
-      if (prev && resp.slice(0, 25) === prev.slice(0, 25)) {
-        // vary a little to avoid repeated feel
-        resp += " I can keep it straightforward.";
+      if (prev && resp.toLowerCase() === prev.toLowerCase()) {
+        resp += " I’ll keep it straightforward.";
       }
       return res.status(200).json({ ok: true, reply: tone(resp) });
     }
 
-    // 2) Question vs statement
-    let reply = /\?\s*$/.test(message) ? answerQuestion(message) : replyToStatement(message);
-
-    // 3) Anti-repeat: if same as last reply, vary wording
-    const last = lastBetty(history);
-    if (last && reply && reply.toLowerCase() === last.toLowerCase()) {
-      reply = pick([
-        "Happy to.",
-        "No problem.",
-        "Alright, I can do that."
-      ]);
-    }
+    // Direct Q&A vs statement with topic-aware, non-generic replies
+    const prevBetty = lastBetty(history);
+    const reply = /\?\s*$/.test(message)
+      ? answerQuestion(message, prevBetty)
+      : replyToStatement(message, prevBetty);
 
     return res.status(200).json({ ok: true, reply: tone(reply) });
 
