@@ -1,5 +1,6 @@
-// Bank-driven responses for Betty (verbatim lines from your Response Pack).
-// Paste the full lists from your doc into each array to expand variety.
+// Bank-driven responses for Betty (verbatim-style lines from your Response Pack).
+// Expand any array with more lines from your doc to add variety.
+// Source pack: “Betty_300_Prompts_with_Responses.docx”  (paste your full lists here)
 
 module.exports = {
   persona: {
@@ -10,8 +11,6 @@ module.exports = {
       "Hi Detective, how can I help?",
       "Hello Detective, what can I do for you today?",
       "Hi, what would you like to look into?"
-      // You can also seed some of your friendly greetings here.
-      // e.g. "Hiya, lovely to see you! What’s on your mind today?"
     ],
     closes: [
       "Thanks Detective — clear.",
@@ -21,89 +20,97 @@ module.exports = {
   },
 
   greetings: [
-    "Hiya, lovely to see you! What’s on your mind today?",
-    "Hello there, I’m glad you popped by. Got a wee question for me?",
-    "Good to see you! I’m here if you’ve got a question."
-    // ...paste the rest of your greetings from the pack
+    "Of course — go ahead. What’s on your mind?",
+    "Sure thing, Detective. Fire away.",
+    "Absolutely — I’m all ears."
+    // (Add more warm invites if you like)
   ],
 
+  // Gifts & value thresholds (use your doc’s exact phrasing)
   gifts: [
     "If it’s under £50, you can accept it, just remember to record it.",
     "Anything above £50 is too much — best to decline kindly.",
-    "During tenders we can’t take anything at all, not even a coffee.",
-    "Wee branded items are fine if modest, just declare them.",
-    "Always pop every gift, even chocolates, in the register."
-    // ...paste the rest of your 'Gifts' lines
+    "If you’re unsure of the value, check and record it, then let your manager know.",
+    "If it’s a take-away item like wine, that’s a gift and needs logging."
+    // ... paste the rest from the pack
   ],
 
+  // Hospitality (meals / tickets)
   hospitality: [
-    "Meals under £100 for business are okay, just log them.",
-    "Anything over £100 needs line manager approval.",
-    "If the hospitality feels lavish, best not to accept it.",
-    "Hospitality should always be reasonable and linked to business."
-    // ...paste the rest
+    "Meals linked to business are okay if reasonable and logged.",
+    "Tickets count as hospitality and should be approved and recorded.",
+    "If it feels lavish, better not to accept it."
+    // ... paste the rest from the pack
   ],
 
+  // “During tender” rules
   tender: [
-    "During tenders, no gifts or hospitality are acceptable.",
-    "Tendering time is zero tolerance, nothing allowed.",
-    "Even a coffee during a tender isn’t okay."
-    // ...paste the rest
+    "During tenders, no gifts or hospitality are acceptable — not even a coffee.",
+    "Tendering time is zero tolerance — nothing allowed."
+    // ... paste more lines if you have them
   ],
 
+  // Public officials
   officials: [
-    "Only wee tokens under £25 are allowed for public officials.",
-    "Hospitality with officials always needs approval.",
-    "Cash or vouchers are never permitted for officials."
-    // ...paste the rest
+    "Only small token items under £25 are allowed for public officials, and they must be declared.",
+    "Cash or cash equivalents are never permitted for officials.",
+    "Hospitality with officials needs approval and must be modest."
+    // ... paste more
   ],
 
+  // Facilitation payments
   facilitation: [
-    "Facilitation payments are never allowed, not even small ones.",
-    "If someone asks for an ‘extra fee’, refuse and escalate.",
-    "Cash shortcuts must be reported immediately."
-    // ...paste the rest
+    "Facilitation payments are not allowed — refuse and report it.",
+    "Even if it’s ‘common practice’, we can’t do it — escalate instead.",
+    "If there’s a genuine safety risk, step away and report straight away."
+    // ... paste more
   ],
 
+  // Third parties / agents
   thirdParties: [
-    "Agents must go through due diligence first.",
+    "Agents must go through due diligence before we work with them.",
     "We need contracts with anti-bribery clauses in place.",
-    "No hidden or extra fees without approval."
-    // ...paste the rest
+    "We avoid hidden or unusual commissions."
+    // ... paste more
   ],
 
+  // Register & records
   register: [
-    "All gifts and hospitality must be logged in the register.",
-    "Even wee ones should be recorded, better safe than sorry.",
+    "All gifts and hospitality must be logged in the register, even the wee ones.",
+    "If you forget to log, update it as soon as possible and tell your manager.",
     "Transparency means keeping the register complete."
-    // ...paste the rest
+    // ... paste more
   ],
 
+  // Travel & lodging
   travel: [
-    "Travel should normally be covered by Acme.",
-    "If a supplier offers to pay, seek approval first.",
-    "Better for Acme to pay its own way to avoid risk."
-    // ...paste the rest
+    "Travel should normally be covered by Acme — not suppliers.",
+    "If a supplier offers to pay, seek approval first and keep it reasonable.",
+    "Upgrades or luxury travel from suppliers aren’t allowed."
+    // ... paste more
   ],
 
+  // Donations & sponsorship
   donations: [
-    "Donations need prior approval to be made.",
-    "Political donations are strictly prohibited.",
-    "Sponsorship mustn’t influence business decisions."
-    // ...paste the rest
+    "Donations need prior approval and must be transparent.",
+    "Political donations are prohibited.",
+    "Donations must never influence business decisions, and they should be recorded."
+    // ... paste more
   ],
 
+  // Conflicts of interest
   conflicts: [
-    "If family are involved, declare it openly.",
-    "Personal connections must be disclosed straight away.",
-    "Conflicts of interest should be shared transparently."
-    // ...paste the rest
+    "Declare personal connections right away so it’s on record.",
+    "If family are involved on the supplier/client side, disclose it immediately.",
+    "Owning shares in a supplier should be declared."
+    // ... paste more
   ],
 
+  // Positive closes / acknowledgements
   closing: [
     "That’s spot on — you’ve nailed it.",
-    "Perfect, thank you for checking with me.",
-    "Exactly right — well done for confirming."
-    // ...paste the rest
+    "Exactly right — thanks for confirming.",
+    "Perfect — we’ll do it that way."
+    // ... paste more
   ]
 };
