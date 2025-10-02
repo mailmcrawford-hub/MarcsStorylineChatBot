@@ -112,5 +112,16 @@ module.exports = {
     "Exactly right — thanks for confirming.",
     "Perfect — we’ll do it that way."
     // ... paste more
-  ]
+  ],
+
+  // Add near the bottom of api/betty_banks.js
+module.exports.qaPairs = [
+  // Exact or near-exact questions your learners ask → the best Betty line
+  { q: "can i accept a £30 gift", a: "If it’s under £50, you can accept it—just log it in the register." },
+  { q: "are football tickets ok during a tender", a: "During tenders, no gifts or hospitality are acceptable—even tickets or a coffee." },
+  { q: "customs asked for £20 to speed it up", a: "That’s a facilitation payment—we should refuse and ask for the official process, then report it." },
+
+  // keep adding from your 300-pack… one line per pair
+];
+
 };
