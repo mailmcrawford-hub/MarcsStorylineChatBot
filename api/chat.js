@@ -1,28 +1,34 @@
-// Vercel Serverless Function: /api/chat
-export default function handler(req, res) {
-  // Basic CORS so Storyline can call this from anywhere
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+// /api/chat — "Betty" scenario bot for Storyline (Node 18+)
 
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const message = (body.message || "").toString().trim();
-
-    const reply = message
-      ? `You said: "${message}". Hello from your bot.`
-      : "Hi there. I am connected and ready.";
-
-    return res.status(200).json({ ok: true, reply });
-  } catch (err) {
-    return res.status(200).json({
-      ok: false,
-      reply: "",
-      error: "Could not read your message."
-    });
-  }
-}
+const CONFIG = {
+  character: {
+    name: "Betty",
+    role: "Sales Executive at Acme Group",
+    tone: "friendly, candid, professional",
+    locale: "UK English",
+    reading_level: "B1"
+  },
+  interaction: {
+    max_tokens_per_turn: 160,
+    max_reply_chars: 240,
+    max_sentences: 2
+  },
+  course: {
+    summary:
+      "Zero tolerance for bribery and facilitation payments; clear thresholds for gifts and hospitality; stricter rules for public officials; accurate records; third-party due diligence; safe reporting.",
+    glossary: {
+      bribe:
+        "Anything of value offered or received to improperly influence a decision.",
+      anything_of_value:
+        "Cash, gifts, hospitality, travel, donations, jobs, internships, favours, discounts, confidential information.",
+      facilitation_payment:
+        "Small unofficial payment to speed routine actions—prohibited.",
+      kickback:
+        "Secret payment or benefit for awarding business—prohibited.",
+      public_official:
+        "Anyone employed by or acting on behalf of a public body.",
+      third_party_intermediary:
+        "Agent, distributor, reseller or consultant acting for Acme.",
+      conflict_of_interest:
+        "Personal interest that could influence work decisions.",
+      gifts_and_hospitality_re_
