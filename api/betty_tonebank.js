@@ -1,6 +1,6 @@
 // /api/betty_tonebank.js
 // Betty — tone-bank bot for Storyline. Returns { ok:true, reply }.
-// Softer tone handling: answer first, gentle nudge only if no intent matched.
+// Fix: no "either/or" prompts; single-point nudges; escape-hatch to avoid loops.
 
 "use strict";
 
@@ -17,7 +17,6 @@ function setCORS(res){
 const clamp = (s, n=420) => (s==null ? "" : String(s)).slice(0, n);
 const norm  = (s) => (s==null ? "" : String(s)).toLowerCase();
 const rnd   = (arr) => arr[Math.floor(Math.random() * arr.length)];
-
 const isYesNoStart = (m) => /^\s*(do|does|did|is|are|am|can|could|may|might|will|would|have|has|had|should)\b/i.test((m||"").trim());
 
 function isAffirmative(msg){
@@ -31,7 +30,7 @@ function isNegative(msg){
          /(within (policy|limits)|seems fine|okay|acceptable)/.test(m);
 }
 
-/* ---------- Tone detection (light) ---------- */
+/* ---------- Tone (light) ---------- */
 function detectTone(msg){
   const m = norm(msg);
   if (/(!{2,}|ridiculous|unbelievable|\bnow\b.*\banswer\b)/i.test(msg) || /(shut up|listen|answer me)/i.test(m)) return "aggressive";
@@ -58,7 +57,7 @@ const GREET = {
   thanks:    ["You’re welcome—anything else you need?","No problem—happy to help.","Glad to help—what next?","Any time—do you want me to log it?","Of course—what else?","You’re welcome—what next?"]
 };
 
-/* ---------- Facts / flow text ---------- */
+/* ---------- Scenario facts ---------- */
 const FACTS = {
   describeHamper: [
     "It’s a luxury food and wine hamper, roughly £150–£220.",
@@ -77,6 +76,7 @@ const FACTS = {
   ]
 };
 
+/* ---------- Flow banks ---------- */
 const ASK_IF_WRONG = [
   "Did I do something wrong there?","Does that sound like I breached the rules?","Was accepting it a problem under ABC?",
   "Do you think that was out of bounds?","Would that count as a breach?","Was I off-side taking it?",
@@ -97,13 +97,24 @@ const ASK_WHAT_NOW_IF_OK = [
   "Thanks—want me to add a short entry to the register?","Alright—do you want any follow-up from me now?"
 ];
 
-/* ---------- Softer nudges (only used if nothing matched) ---------- */
+/* Single-point nudges (used in fallbacks; no either/or) */
+const NUDGE_SINGLE = [
+  "Shall I start with who sent it?",
+  "Would you like the value first?",
+  "Shall I give you the timing?",
+  "Do you want what the card said?"
+];
+
+/* Very soft variants for sharp tone */
 const SOFT_ACCUSATORY = [
-  "Happy to help—would you like the sender and reason, or the value?","I want to make this useful—shall I start with who sent it or the timing?",
-  "I can cover the basics—who sent it, why, and the value. Where should I start?"
+  "Happy to help—shall I start with who sent it?",
+  "I want to make this useful—would you like the value first?",
+  "I can cover the basics—do you want the timing?"
 ];
 const SOFT_AGGRESSIVE = [
-  "I’m here to help—what would you like to know first?","Let’s start simply—who sent it or how much it was?","Shall I begin with the sender or the value?"
+  "I’m here to help—shall I start with who sent it?",
+  "Let’s keep it simple—would you like the value first?",
+  "I can begin with the timing if you want."
 ];
 
 /* ---------- Successful closers ---------- */
@@ -146,10 +157,10 @@ function isTimingProbe(msg){
 }
 
 /* ---------- Router ---------- */
-function routeReply({ message }){
+function routeReply({ message, history }){
   const tone = detectTone(message);
 
-  // A) Close if policy is correctly stated
+  // A) Close if policy is stated
   if (detectiveGaveCorrectPolicy(message)) return { reply: rnd(CLOSERS) };
 
   // B) Greetings
@@ -160,35 +171,42 @@ function routeReply({ message }){
     if (g.kind === "thanks")    return { reply: rnd(GREET.thanks) };
   }
 
-  // C) Core intents (ANSWER FIRST)
+  // C) Core Q&A
   if (isHamperDescriptionAsk(message)) {
     return { reply: rnd(FACTS.describeHamper) };
   }
-
   if (isWhoWhyProbe(message)) {
     const whoWhy = rnd(FACTS.whoWhy);
     const maybeTiming = Math.random() < 0.5 ? " " + rnd(FACTS.timing) : "";
-    const ask = " " + rnd(ASK_IF_WRONG);
-    return { reply: (whoWhy + maybeTiming + ask).trim() };
+    return { reply: (whoWhy + maybeTiming + " " + rnd(ASK_IF_WRONG)).trim() };
   }
-
   if (isTimingProbe(message)) {
     return { reply: `${rnd(FACTS.timing)} ${rnd(ASK_IF_WRONG)}` };
   }
 
-  // D) Yes/No stage handling
+  // D) Yes/No stage
   if (isYesNoStart(message) || isAffirmative(message) || isNegative(message)) {
     if (isAffirmative(message))  return { reply: rnd(ASK_WHAT_SHOULD_I_HAVE_DONE) };
     if (isNegative(message))     return { reply: rnd(ASK_WHAT_NOW_IF_OK) };
     return { reply: "Could you clarify—was that a breach or okay under ABC?" };
   }
 
-  // E) Only if NOTHING matched, use very soft tone nudges
+  // E) Fallbacks (single-point; no either/or)
+  // If the last history already contains a nudge, give a tiny fact + new single nudge to break loops.
+  const h = String(history || "");
+  const recentlyNudged = /Shall I start with who sent it\?|Would you like the value first\?|Shall I give you the timing\?|Do you want what the card said\?/i.test(h.slice(-300));
+
+  if (recentlyNudged) {
+    // Provide one concrete fact, then a different single-point nudge
+    const facts = [ rnd(FACTS.describeHamper), rnd(FACTS.whoWhy), rnd(FACTS.timing) ];
+    const nudge = rnd(NUDGE_SINGLE);
+    return { reply: `${facts[0]} ${nudge}` };
+  }
+
   if (tone === "aggressive")  return { reply: rnd(SOFT_AGGRESSIVE) };
   if (tone === "accusatory")  return { reply: rnd(SOFT_ACCUSATORY) };
 
-  // F) Final fallback
-  return { reply: "Do you want the sender and reason, or the value?" };
+  return { reply: rnd(NUDGE_SINGLE) };
 }
 
 /* ---------- HTTP handler ---------- */
@@ -210,8 +228,9 @@ function handler(req, res){
     if (!body || typeof body !== "object") body = {};
 
     const message = String(body.message||"");
+    const history = String(body.history||"");
 
-    const { reply } = routeReply({ message });
+    const { reply } = routeReply({ message, history });
     return res.status(200).json({ ok:true, reply: clamp(reply) });
   }catch(e){
     return res.status(200).json({ ok:false, reply:"", error:"Server error." });
