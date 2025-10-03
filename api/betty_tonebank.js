@@ -1,6 +1,6 @@
 // /api/betty_tonebank.js
-// Betty — tone-bank bot for Storyline. Plain-text reply in { ok:true, reply }.
-// Self-contained, with robust greetings, policy closers, and cleaned long starters.
+// Betty — tone-bank bot for Storyline. Returns { ok:true, reply }.
+// No prefixy intros. Adds policy-linked follow-ups per context. Self-contained.
 
 "use strict";
 
@@ -26,32 +26,22 @@ const asksValue = (m) => /(how much|value|worth|price|cost|approx(imate)? value|
 /* ---------- Tone detection ---------- */
 function detectTone(msg){
   const m = norm(msg);
-
-  if (/(!{2,}|you lied|obviously|ridiculous|unbelievable|\bnow\b.*\banswer\b)/i.test(msg) ||
-      /(shut up|listen|answer me)/i.test(m)) return "aggressive";
-
+  if (/(!{2,}|you lied|obviously|ridiculous|unbelievable|\bnow\b.*\banswer\b)/i.test(msg) || /(shut up|listen|answer me)/i.test(m)) return "aggressive";
   if (/(you (should|must)|you knew|you realised|against policy|breach|violate|why did you)/i.test(m)) return "accusatory";
-
   if (/(section \d|per policy|as per|threshold|sub clause|pursuant|hereby|therefore)/i.test(m)) return "legalistic";
-
   if (/(asap|quick|hurry|fast|right now|urgent)/i.test(m)) return "rushed";
-
   if (/(could you|please|thanks|thank you|appreciate)/i.test(m)) return "polite";
-
   if (/(\?|help me understand|what happened|can you clarify)/i.test(m)) return "probing";
-
   return "neutral";
 }
 
 /* ---------- Greeting detection ---------- */
 function detectGreetingIntent(message){
-  const m = norm(message).trim();
-  if (/^(hi|hello|hey|hiya|howdy|good (morning|afternoon|evening))(,|\!|\.)?\s*(betty|there)?\s*$/i.test(message.trim()))
-    return { kind:"hi" };
-  if (/(how (are|r) (you|u)|how's it going|how are things|you ok\??|you doing ok\??)/i.test(m))
-    return { kind:"howareyou" };
-  if (/^(thanks|thank you|cheers|much appreciated)[.!]?$/.test(m) || /(thanks|thank you|cheers|appreciate that)/i.test(m))
-    return { kind:"thanks" };
+  const t = message.trim();
+  const m = norm(t);
+  if (/^(hi|hello|hey|hiya|howdy|good (morning|afternoon|evening))(,|\!|\.)?\s*(betty|there)?\s*$/i.test(t)) return { kind:"hi" };
+  if (/(how (are|r) (you|u)|how's it going|how are things|you ok\??|you doing ok\??)/i.test(m)) return { kind:"howareyou" };
+  if (/^(thanks|thank you|cheers|much appreciated)[.!]?$/.test(t) || /(thanks|thank you|cheers|appreciate that)/i.test(m)) return { kind:"thanks" };
   return null;
 }
 
@@ -86,47 +76,76 @@ const GREET = {
   }
 };
 
-/* ---------- Answer banks (clean long starters; no colons) ---------- */
-const BANK = {
-  polite: {
-    short: ["Yes, that makes sense.","No, that didn’t happen.","I believe so, yes.","Not to my knowledge.","Yes—happy to confirm.","No—let me clarify that."],
-    long:  ["Here’s the short version.","Let me explain briefly.","Happy to walk you through it.","I can outline it simply.","Let me give you the basics.","I’ll keep it straightforward."],
-    follow:["Would you like the exact details logged?","Do you want me to add that to the form?","Shall I note that in the disclosure?","Do you want the receipt value as well?","Should I write that up now?","Do you want me to summarise it?"]
+/* ---------- Short yes/no bank (kept minimal, no prefixes) ---------- */
+const YESNO = {
+  polite:    ["Yes.","No.","I believe so.","I don’t think so.","Likely yes.","Probably not."],
+  probing:   ["Yes.","No.","Yes, within reason.","No, not here.","Seems so.","Doesn’t look like it."],
+  supportive:["Yes—thanks for checking.","No—good call to ask.","Yes, that fits.","No, not this time.","Yes, that aligns.","No, I wouldn’t say so."],
+  neutral:   ["Yes.","No.","Think so.","Don’t think so.","Probably.","Probably not."],
+  legalistic:["Affirmative.","Negative.","Correct.","Incorrect.","Applicable.","Not applicable."],
+  accusatory:["Yes—happy to clarify.","No—that’s not right.","Yes, but I can explain.","No, and I can explain.","Yes, if needed.","No, not in my case."],
+  aggressive:["Yes.","No.","If we keep this professional—yes.","No—please keep it measured.","Yes, but calmly.","No."]
+};
+
+/* ---------- Follow-up banks (link answer → next policy step) ---------- */
+const FOLLOWUP = {
+  general: {
+    polite:    ["Do you want me to start the disclosure?","Shall I note this in the form now?","Do you want me to tell my manager too?","Should I log it in the register?","Do you want me to return or donate it?","Shall I record this today?"],
+    probing:   ["Do you want the disclosure raised now?","Should I log this while we’re here?","Do you want names and dates added to the form?","Shall I confirm the amount in the register?","Do you want manager notification added?","Should I proceed with the form?"],
+    supportive:["Shall I file the disclosure and update my manager?","Do you want me to donate it and log it?","Shall I record the amount and timing?","Do you want me to attach the card text?","Should I add this to the register now?","Want me to move ahead with the form?"],
+    neutral:   ["Should I file the disclosure?","Log it now?","Notify my manager as well?","Return or donate it?","Add it to the register?","Proceed with the form?"],
+    legalistic:["Shall I submit the disclosure form?","Add an entry to the register?","Notify my line manager?","Return or donate as appropriate?","Attach card wording to the file?","Confirm amount and timing in the form?"],
+    accusatory:["Do you want me to file the form now?","Should I log it and notify my manager?","Return or donate it to resolve this?","Add the card text to the record?","Record the amount formally?","Proceed with disclosure today?"],
+    aggressive:["If we keep this professional—should I file the form?","Log it now?","Notify my manager and move on?","Return or donate it—your call?","Record the amount in the register?","Proceed with disclosure?"]
   },
-  probing: {
-    short: ["Yes, that’s right.","No, not in this case.","Yes—within reason.","No, that wouldn’t apply.","Yes, as far as I recall.","No—different situation here."],
-    long:  ["Here’s what happened in simple terms.","Let me walk you through the basics.","I’ll outline the key points.","Here’s the relevant bit.","Let me sketch the timeline.","Here’s the gist."],
-    follow:["What else should I clarify?","Do you want the timing pinned down?","Shall I get the exact amount?","Do you want names confirmed?","Should I list who was informed?","Need me to check the emails?"]
+  afterWho: {
+    polite:    ["Do you want me to add Raj and ClientCo to the disclosure?"],
+    probing:   ["Should I include Raj and ClientCo on the form?"],
+    supportive:["Shall I list Raj and ClientCo in the record?"],
+    neutral:   ["Add Raj and ClientCo to the form?"],
+    legalistic:["Include Raj and ClientCo as counterparties?"],
+    accusatory:["Do you want Raj and ClientCo named on the form?"],
+    aggressive:["Add Raj and ClientCo to the record—yes?"]
   },
-  supportive: {
-    short: ["Yes—thanks for checking.","No—appreciate you asking.","Yes, absolutely.","No, I don’t think so.","Yes, that aligns.","No, that’s not the case."],
-    long:  ["Here’s a quick explanation.","Here’s the context in brief.","I’m glad to clarify—here’s the summary.","Happy to explain briefly.","Good question—here’s the short answer.","Here’s a quick, clear version."],
-    follow:["Anything else you’d like?","Shall I add that to the register?","Do you want me to email my manager?","Should I attach a note to the file?","Want me to capture this in the form?","Need anything more from me?"]
+  afterValue: {
+    polite:    ["Given the amount, should I file the disclosure and donate it?"],
+    probing:   ["With that value, do you want disclosure and donation?"],
+    supportive:["Do you want me to disclose and donate based on the value?"],
+    neutral:   ["With that value—disclose and donate?"],
+    legalistic:["Value noted—proceed with disclosure and donation?"],
+    accusatory:["Value recorded—should I file and donate it now?"],
+    aggressive:["With that amount—file the form and donate it?"]
   },
-  neutral: {
-    short: ["Yes.","No.","I think so.","I don’t think so.","Likely yes.","Likely no."],
-    long:  ["Here’s the brief version.","In brief.","Essentially this.","The main point is this.","Keeping it simple.","Here’s the core detail."],
-    follow:["Do you want more detail?","Shall I note that?","Should I get the exact amount?","Want me to check the card?","Shall I file the form now?","Do you want timing confirmed?"]
+  afterTiming: {
+    polite:    ["As it’s close to the renewal, should I disclose and donate?"],
+    probing:   ["Given the timing, do you want disclosure and donation?"],
+    supportive:["Because of the timing, should I log and donate it?"],
+    neutral:   ["Timing noted—disclose and donate?"],
+    legalistic:["Timing linked to decision—proceed with disclosure/donation?"],
+    accusatory:["That timing is sensitive—should I file and donate now?"],
+    aggressive:["Given the timing—do I file and donate?"]
   },
-  accusatory: {
-    short: ["I didn’t ask for it.","I didn’t intend anything improper.","That wasn’t my goal.","I understand your concern.","I can explain.","I’m trying to cooperate."],
-    long:  ["I’ll answer, and just to be clear I didn’t seek it out.","I understand the risk—you’ll get straight answers.","I didn’t try to influence anything; I’ll explain what happened.","I hear your point—here’s the basic context.","I’ll keep it factual.","Let me explain the sequence briefly."],
-    follow:["Do you want the exact dates?","Should I share the card text?","Do you want me to log it now?","Would you like the courier receipt?","Shall I email my manager as well?","Do you want a copy for records?"],
-    shutdown:["I feel that was a bit harsh—can we keep this constructive?","I’m trying to help; could we keep the tone measured?","I’ll cooperate, but please be fair.","Happy to answer—let’s stay factual.","I get the concern—please keep the tone neutral.","I’ll explain, but I didn’t intend anything wrong."]
+  afterCard: {
+    polite:    ["With that wording, should I attach the card and file disclosure?"],
+    probing:   ["Include the card text on the form and donate it?"],
+    supportive:["Shall I add the card wording to the record and donate it?"],
+    neutral:   ["Attach card text and file the form?"],
+    legalistic:["Record card text as evidence and submit disclosure?"],
+    accusatory:["Card suggests intent—do I file and donate now?"],
+    aggressive:["Card noted—file and donate?"]
   },
-  aggressive: {
-    short: ["I’m not comfortable with that tone.","Let’s keep this professional.","I want to cooperate—please keep it measured.","I didn’t ask for it.","I won’t guess—please be specific.","I’ll answer, but let’s stay constructive."],
-    long:  ["I’ll answer briefly, and I’d like to keep this respectful.","I’ll provide the basics; please keep the tone measured.","I’m cooperating—here’s the short version.","You’ll get the facts; let’s stay professional.","I’ll explain once, calmly.","Here’s the core point; I’d prefer a neutral tone."],
-    follow:["Do you want the receipt attached?","Should I log it now?","Do you want the date confirmed?","Shall I send the card text?","Do you want the manager looped in?","Should I file the disclosure today?"]
-  },
-  legalistic: {
-    short: ["Understood.","Yes, that aligns.","No, that doesn’t apply here.","Correct.","Not applicable.","That’s accurate."],
-    long:  ["Here’s the concise account.","Brief factual summary.","Material facts in short.","Relevant detail only.","Concise explanation.","Summary as requested."],
-    follow:["Do you want this appended to the file?","Shall I submit the disclosure form?","Should I donate and note it?","Do you want manager notification included?","Shall I add an entry to the register?","Do you want timestamps attached?"]
+  afterDelivery: {
+    polite:    ["Do you want the courier detail added to the form?"],
+    probing:   ["Add the courier/reception details to the record?"],
+    supportive:["Shall I note the courier to reception on the form?"],
+    neutral:   ["Add delivery details to the record?"],
+    legalistic:["Record courier-to-reception in the file?"],
+    accusatory:["Add delivery details to the form now?"],
+    aggressive:["Log courier delivery—yes?"]
   }
 };
 
-/* ---------- Closers ---------- */
+/* ---------- Closers (successful outcome) ---------- */
 const CLOSERS = [
   "Thanks, Detective — that’s clear. I’ll file the disclosure, donate the hamper, and keep my manager in the loop.",
   "Appreciate the guidance. I’ll disclose it today and arrange a donation so there’s no perception of influence.",
@@ -160,21 +179,11 @@ function hasConfirmed(history, key){
 /* ---------- Policy recognition ---------- */
 function detectiveGaveCorrectPolicy(message){
   const m = norm(message);
-
-  const over25Disclose =
-    /(over|greater than|more than)\s*£?\s*25.*(disclosure|disclose|form|pre-?approval)/i;
-
-  const tiedToDecisionProhibited =
-    /(gift|hamper).*(tender|rfp|bid|decision|renewal).*(not|isn'?t|cannot|can't|shouldn'?t).*(allowed|permitted|ok|acceptable|keep)/i;
-
-  const returnOrDonateWhenInDoubt =
-    /(return|donate).*(when in doubt|if unsure|uncertain|not sure|to avoid influence|appearance)/i;
-
-  const explicitPlan =
-    /(file|submit).*(disclosure|form).*(return|donate|give to charity|charity)/i;
-
-  const notifyManager =
-    /(tell|notify|inform).*(manager|line manager|my boss)/i;
+  const over25Disclose = /(over|greater than|more than)\s*£?\s*25.*(disclosure|disclose|form|pre-?approval)/i;
+  const tiedToDecisionProhibited = /(gift|hamper).*(tender|rfp|bid|decision|renewal).*(not|isn'?t|cannot|can't|shouldn'?t).*(allowed|permitted|ok|acceptable|keep)/i;
+  const returnOrDonateWhenInDoubt = /(return|donate).*(when in doubt|if unsure|uncertain|not sure|to avoid influence|appearance)/i;
+  const explicitPlan = /(file|submit).*(disclosure|form).*(return|donate|give to charity|charity)/i;
+  const notifyManager = /(tell|notify|inform).*(manager|line manager|my boss)/i;
 
   return (
     over25Disclose.test(m) ||
@@ -185,16 +194,12 @@ function detectiveGaveCorrectPolicy(message){
   );
 }
 
-/* ---------- Composer (fixed: wantFollow flag) ---------- */
-function compose(tone, kind, coreLine, wantFollow=false){
-  const block = BANK[tone] || BANK.neutral;
-  const starter = (kind==="long" ? rnd(block.long) : rnd(block.short));
-  const text = (kind==="long" ? `${starter} ${coreLine}` : `${starter}`);
-  if (wantFollow){
-    const follow = rnd(block.follow);
-    return clamp(`${text} ${follow}`);
-  }
-  return clamp(text);
+/* ---------- Follow-up selector ---------- */
+function followUp(tone, context){
+  const t = FOLLOWUP[context] && FOLLOWUP[context][tone] ? FOLLOWUP[context][tone] : null;
+  if (t && t.length) return rnd(t);
+  const g = FOLLOWUP.general[tone] || FOLLOWUP.general.neutral;
+  return rnd(g);
 }
 
 /* ---------- Router ---------- */
@@ -205,12 +210,12 @@ function routeReply({ message, history }){
   const alreadyWho   = hasConfirmed(history, "who");
   const alreadyValue = hasConfirmed(history, "value");
 
-  // 0) Closers: if Detective states policy correctly
+  // 0) Close if Detective states policy correctly
   if (detectiveGaveCorrectPolicy(message)) {
     return { reply: rnd(CLOSERS) };
   }
 
-  // 1) Greetings first
+  // 1) Greetings
   const g = detectGreetingIntent(message);
   if (g){
     const toneBlock = GREET[g.kind][tone] || GREET[g.kind].neutral;
@@ -218,49 +223,51 @@ function routeReply({ message, history }){
   }
 
   // 2) Tone hard-limits
-  if (tone === "aggressive") {
-    return { reply: rnd(BANK.aggressive.short) };
-  }
-  if (tone === "accusatory" && !(asksWho(m) || asksValue(m))) {
-    return { reply: rnd(BANK.accusatory.shutdown) };
-  }
+  if (tone === "aggressive") return { reply: "Let’s keep this professional and I’ll answer." };
+  if (tone === "accusatory" && !(asksWho(m) || asksValue(m))) return { reply: "I’ll cooperate—let’s keep it factual and measured." };
 
   // 3) Yes/No style
   if (isYesNo(message)) {
-    return { reply: compose(tone, "short") };
+    const block = YESNO[tone] || YESNO.neutral;
+    return { reply: rnd(block) };
   }
 
-  // 4) Explain/Tell me (one nugget only, with gentle follow-up)
+  // 4) Explain/Tell me (one nugget + policy-linked follow-up)
   if (isExplain(message)) {
-    if (!alreadyWho)   return { reply: compose(tone, "long", FACT_LINES.who, true) };
-    if (!alreadyValue) return { reply: compose(tone, "long", FACT_LINES.value, true) };
-    const next = [FACT_LINES.delivery, FACT_LINES.timing, FACT_LINES.card];
-    return { reply: compose(tone, "long", rnd(next), true) };
-  }
-
-  // 5) Direct facts
-  if (asksWho(message))   return { reply: compose(tone, "long", FACT_LINES.who) };
-  if (asksValue(message)) return { reply: compose(tone, "long", FACT_LINES.value) };
-
-  // 6) After BOTH facts are confirmed → nudge for policy decision
-  if (alreadyWho && alreadyValue) {
-    const askDo = [
-      "What would you like me to do under the ABC policy?",
-      "How should I handle this under our ABC rules?",
-      "Do you want me to disclose and donate it?",
-      "Shall I file the disclosure and tell my manager?",
-      "What’s your call—return or donate, and log it?",
-      "How do you want me to proceed, Detective?"
+    if (!alreadyWho)   return { reply: `${FACT_LINES.who} ${followUp(tone,"afterWho")}` };
+    if (!alreadyValue) return { reply: `${FACT_LINES.value} ${followUp(tone,"afterValue")}` };
+    const nexts = [
+      ["delivery", FACT_LINES.delivery],
+      ["timing",   FACT_LINES.timing],
+      ["card",     FACT_LINES.card]
     ];
-    return { reply: rnd(askDo) };
+    const [ctx, line] = rnd(nexts);
+    return { reply: `${line} ${followUp(tone, ctx==="delivery"?"afterDelivery":ctx==="timing"?"afterTiming":"afterCard")}` };
   }
 
-  // 7) Fallback: reveal a single missing fact
-  if (!alreadyWho)   return { reply: compose(tone, "long", FACT_LINES.who) };
-  if (!alreadyValue) return { reply: compose(tone, "long", FACT_LINES.value) };
+  // 5) Direct facts (who/value) with contextual follow-up
+  if (asksWho(message))   return { reply: `${FACT_LINES.who} ${followUp(tone,"afterWho")}` };
+  if (asksValue(message)) return { reply: `${FACT_LINES.value} ${followUp(tone,"afterValue")}` };
 
-  // 8) Final fallback
-  return { reply: compose(tone, "short", "", true) };
+  // 6) After BOTH facts are confirmed → ask for policy decision
+  if (alreadyWho && alreadyValue) {
+    const nudges = [
+      "How should I handle this under the ABC policy—disclose and donate?",
+      "Do you want me to file the disclosure and notify my manager?",
+      "Shall I log it in the register and donate the hamper?",
+      "What’s your call—return or donate, and record it?",
+      "Should I submit the form now and keep my manager in the loop?",
+      "What would you like me to do next under ABC?"
+    ];
+    return { reply: rnd(nudges) };
+  }
+
+  // 7) Fallback: reveal one missing fact with a sensible follow-up
+  if (!alreadyWho)   return { reply: `${FACT_LINES.who} ${followUp(tone,"afterWho")}` };
+  if (!alreadyValue) return { reply: `${FACT_LINES.value} ${followUp(tone,"afterValue")}` };
+
+  // 8) Final fallback: neutral nudge to policy
+  return { reply: followUp(tone,"general") };
 }
 
 /* ---------- HTTP handler ---------- */
@@ -269,7 +276,7 @@ function handler(req, res){
   if (req.method === "OPTIONS") return res.status(200).end();
 
   if (req.method === "GET") {
-    return res.status(200).json({ ok:true, reply: "Hi Detective, Betty here. What would you like to know about the hamper?" });
+    return res.status(200).json({ ok:true, reply: "Hi Detective, Betty here. How can I help?" });
   }
 
   if (req.method !== "POST") {
