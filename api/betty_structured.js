@@ -10,7 +10,7 @@ function setCORS(res){
 
 // Optional: authored Q&A and phrasing banks (qaPairs lives here)
 let BANK = null;
-try { BANK = require("./betty_banks"); } catch { BANK = { qaPairs: [] }; }
+try { BANK = require("./betty_banks"); } catch { BANK = { qaPairs: [], greetings: [], persona:{ openers:["Hi Detective, how can I help?"] } }; }
 
 const PERSONAE = {
   Betty: { name: "Betty Morales", role: "Sales Executive at Acme Things Ltd." },
@@ -25,7 +25,7 @@ const FACTS = {
   timing: "two weeks before a renewal decision meeting",
   valueRange: [150,220],
   card: "locking in the renewal",
-  disclosureFiled: false, // hasn't filed yet
+  disclosureFiled: false,
   mentionedInChat: true
 };
 
@@ -48,7 +48,7 @@ function toneDetect(msg){
   if (/(policy|section|per|threshold|disclosure form|compliance)/.test(m)) return "legalistic";
   if (/(why did you|you should|you realise|breach|violate|against|wrong)/.test(m)) return "accusatory";
   if (/(can you walk me|talk me through|help me understand|could you explain|what happened)/.test(m) || (m.match(/\?/g)||[]).length>=2) return "probing";
-  if (/(thanks|appreciate|that helps|no worries|we’ll sort this)/.test(m)) return "supportive";
+  if (/(thanks|thank you|appreciate|that helps|no worries|we’ll sort this)/.test(m)) return "supportive";
   return "neutral";
 }
 function stanceFromTone(t, history){
@@ -80,6 +80,13 @@ function policyPoints(msg){
   return pts;
 }
 function mentions(msg, re){ return re.test(norm(msg)); }
+
+// GREETING detector (prevents scene recap on “Hi”)
+function isGreeting(msg){
+  const m = (msg||"").toLowerCase().trim();
+  return /^(hi|hello|hey|hiya|howdy|good (morning|afternoon|evening))\b/.test(m) ||
+         /^(thanks|thank you)$/.test(m);
+}
 
 /* ---------- token utils for QA matching ---------- */
 const stopwords = new Set("the a an and or but if then so to of for on in at by from with as is are was were be been being do does did have has had you your we our us it this that those these there here what when where why how can may should could would will".split(" "));
@@ -150,7 +157,7 @@ function detectScenario(message){
 }
 
 /* =======================================================================
-   ANSWER-FIRST replyEngine (drop-in)
+   ANSWER-FIRST replyEngine (with greeting handler)
    ======================================================================= */
 function replyEngine({persona, message, history}) {
   const who = persona==="Freda" ? PERSONAE.Freda : PERSONAE.Betty;
@@ -159,11 +166,28 @@ function replyEngine({persona, message, history}) {
   const tone = toneDetect(message);
   let stance = stanceFromTone(tone, history);
 
+  // GREETING → friendly open, no scenario recap
+  if (isGreeting(message)) {
+    const first = who.name.split(" ")[0];
+    const reply = `Hi Detective, ${first} here. What would you like to know about the hamper?`;
+    return {
+      persona: who.name,
+      reply_text: clamp(reply),
+      tone_detected: tone,
+      stance,
+      policy_points_referenced: [],
+      risk_flags: [],
+      next_questions_for_detective: [],
+      memory_updates: [],
+      suggested_stage_transition: "stay"
+    };
+  }
+
   // Shared containers
   const m = norm(message);
-  const ppSet   = new Set();                   // policy points referenced
+  const ppSet   = new Set();
   const flags   = new Set(risksFromContext(message));
-  const nextQs  = [];                          // at most one
+  const nextQs  = [];   // at most one
   const memory  = [];
   let stage     = "stay";
 
