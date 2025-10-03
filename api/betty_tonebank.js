@@ -1,6 +1,6 @@
 // /api/betty_tonebank.js
 // Betty — tone-bank bot for Storyline. Plain-text reply in { ok:true, reply }.
-// Self-contained, now with robust greeting detection & tone-matched greeting banks.
+// Self-contained, with robust greetings, policy closers, and cleaned long starters.
 
 "use strict";
 
@@ -13,7 +13,7 @@ function setCORS(res){
   }catch{}
 }
 
-/* ---------- Utilities ---------- */
+/* ---------- Utils ---------- */
 const clamp = (s, n=340) => (s==null ? "" : String(s)).slice(0, n);
 const norm  = (s) => (s==null ? "" : String(s)).toLowerCase();
 const rnd   = (arr) => arr[Math.floor(Math.random() * arr.length)];
@@ -43,26 +43,19 @@ function detectTone(msg){
   return "neutral";
 }
 
-/* ---------- Greeting detection (intent + type) ---------- */
+/* ---------- Greeting detection ---------- */
 function detectGreetingIntent(message){
   const m = norm(message).trim();
-
-  // Pure/opening greetings (may include "Betty" or "Detective")
-  if (/^(hi|hello|hey|hiya|howdy|good (morning|afternoon|evening))(,|\!|\.)?\s*(betty|there)?\s*$/i.test(message.trim())){
+  if (/^(hi|hello|hey|hiya|howdy|good (morning|afternoon|evening))(,|\!|\.)?\s*(betty|there)?\s*$/i.test(message.trim()))
     return { kind:"hi" };
-  }
-  // “How are you?” style
-  if (/(how (are|r) (you|u)|how's it going|how are things|you ok\??|you doing ok\??)/i.test(m)){
+  if (/(how (are|r) (you|u)|how's it going|how are things|you ok\??|you doing ok\??)/i.test(m))
     return { kind:"howareyou" };
-  }
-  // Thanks / thank you
-  if (/^(thanks|thank you|cheers|much appreciated)[.!]?$/.test(m) || /(thanks|thank you|cheers|appreciate that)/i.test(m)){
+  if (/^(thanks|thank you|cheers|much appreciated)[.!]?$/.test(m) || /(thanks|thank you|cheers|appreciate that)/i.test(m))
     return { kind:"thanks" };
-  }
   return null;
 }
 
-/* ---------- Greeting banks (tone → variants) ---------- */
+/* ---------- Greeting banks ---------- */
 const GREET = {
   hi: {
     polite:    ["Hi Detective—Betty here. How can I help?","Hello—what would you like to know about the hamper?","Hi—ready when you are.","Hello—happy to chat.","Hi—fire away.","Hi there—what’s your first question?"],
@@ -93,11 +86,11 @@ const GREET = {
   }
 };
 
-/* ---------- Main banks (answers) ---------- */
+/* ---------- Answer banks (clean long starters; no colons) ---------- */
 const BANK = {
   polite: {
     short: ["Yes, that makes sense.","No, that didn’t happen.","I believe so, yes.","Not to my knowledge.","Yes—happy to confirm.","No—let me clarify that."],
-    long:  ["Sure—here’s the short version.","Of course—let me explain briefly.","Happy to walk you through it.","Yes, I can outline it simply.","Let me give you the basics.","I’ll keep it straightforward."],
+    long:  ["Here’s the short version.","Let me explain briefly.","Happy to walk you through it.","I can outline it simply.","Let me give you the basics.","I’ll keep it straightforward."],
     follow:["Would you like the exact details logged?","Do you want me to add that to the form?","Shall I note that in the disclosure?","Do you want the receipt value as well?","Should I write that up now?","Do you want me to summarise it?"]
   },
   probing: {
@@ -107,33 +100,33 @@ const BANK = {
   },
   supportive: {
     short: ["Yes—thanks for checking.","No—appreciate you asking.","Yes, absolutely.","No, I don’t think so.","Yes, that aligns.","No, that’s not the case."],
-    long:  ["Thanks—here’s a quick explanation.","Appreciate it—here’s the context.","I’m glad to clarify—here’s the summary.","Happy to explain—briefly:","Good question—here’s the short answer.","Here’s a quick, clear version."],
+    long:  ["Here’s a quick explanation.","Here’s the context in brief.","I’m glad to clarify—here’s the summary.","Happy to explain briefly.","Good question—here’s the short answer.","Here’s a quick, clear version."],
     follow:["Anything else you’d like?","Shall I add that to the register?","Do you want me to email my manager?","Should I attach a note to the file?","Want me to capture this in the form?","Need anything more from me?"]
   },
   neutral: {
     short: ["Yes.","No.","I think so.","I don’t think so.","Likely yes.","Likely no."],
-    long:  ["Here’s the brief version.","In short:","Quick summary:","Essentially:","The main point is:","To keep it simple:"],
+    long:  ["Here’s the brief version.","In brief.","Essentially this.","The main point is this.","Keeping it simple.","Here’s the core detail."],
     follow:["Do you want more detail?","Shall I note that?","Should I get the exact amount?","Want me to check the card?","Shall I file the form now?","Do you want timing confirmed?"]
   },
   accusatory: {
     short: ["I didn’t ask for it.","I didn’t intend anything improper.","That wasn’t my goal.","I understand your concern.","I can explain.","I’m trying to cooperate."],
-    long:  ["I’ll answer, but I want to be clear I didn’t seek it out.","I understand the risk—you’ll get straight answers.","I didn’t try to influence anything; I’ll explain what happened.","I hear your point; here’s the basic context.","I’ll keep it factual.","Let me explain the sequence briefly."],
+    long:  ["I’ll answer, and just to be clear I didn’t seek it out.","I understand the risk—you’ll get straight answers.","I didn’t try to influence anything; I’ll explain what happened.","I hear your point—here’s the basic context.","I’ll keep it factual.","Let me explain the sequence briefly."],
     follow:["Do you want the exact dates?","Should I share the card text?","Do you want me to log it now?","Would you like the courier receipt?","Shall I email my manager as well?","Do you want a copy for records?"],
     shutdown:["I feel that was a bit harsh—can we keep this constructive?","I’m trying to help; could we keep the tone measured?","I’ll cooperate, but please be fair.","Happy to answer—let’s stay factual.","I get the concern—please keep the tone neutral.","I’ll explain, but I didn’t intend anything wrong."]
   },
   aggressive: {
     short: ["I’m not comfortable with that tone.","Let’s keep this professional.","I want to cooperate—please keep it measured.","I didn’t ask for it.","I won’t guess—please be specific.","I’ll answer, but let’s stay constructive."],
-    long:  ["I’ll answer briefly, but I’d like to keep this respectful.","I’ll provide the basics; please keep the tone measured.","I’m cooperating—here’s the short version.","You’ll get the facts; let’s stay professional.","I’ll explain once, calmly.","Here’s the core point; I’d prefer a neutral tone."],
+    long:  ["I’ll answer briefly, and I’d like to keep this respectful.","I’ll provide the basics; please keep the tone measured.","I’m cooperating—here’s the short version.","You’ll get the facts; let’s stay professional.","I’ll explain once, calmly.","Here’s the core point; I’d prefer a neutral tone."],
     follow:["Do you want the receipt attached?","Should I log it now?","Do you want the date confirmed?","Shall I send the card text?","Do you want the manager looped in?","Should I file the disclosure today?"]
   },
   legalistic: {
     short: ["Understood.","Yes, that aligns.","No, that doesn’t apply here.","Correct.","Not applicable.","That’s accurate."],
-    long:  ["For clarity, here’s the concise account.","Brief factual summary:","Material facts in short:","Relevant detail only:","Concise explanation:","Summary as requested:"],
+    long:  ["Here’s the concise account.","Brief factual summary.","Material facts in short.","Relevant detail only.","Concise explanation.","Summary as requested."],
     follow:["Do you want this appended to the file?","Shall I submit the disclosure form?","Should I donate and note it?","Do you want manager notification included?","Shall I add an entry to the register?","Do you want timestamps attached?"]
   }
 };
 
-/* ---------- Closing lines when Detective states policy correctly ---------- */
+/* ---------- Closers ---------- */
 const CLOSERS = [
   "Thanks, Detective — that’s clear. I’ll file the disclosure, donate the hamper, and keep my manager in the loop.",
   "Appreciate the guidance. I’ll disclose it today and arrange a donation so there’s no perception of influence.",
@@ -192,13 +185,16 @@ function detectiveGaveCorrectPolicy(message){
   );
 }
 
-/* ---------- Composer ---------- */
-function compose(tone, kind, coreLine, extraFollow){
+/* ---------- Composer (fixed: wantFollow flag) ---------- */
+function compose(tone, kind, coreLine, wantFollow=false){
   const block = BANK[tone] || BANK.neutral;
   const starter = (kind==="long" ? rnd(block.long) : rnd(block.short));
-  const follow  = extraFollow || rnd(block.follow);
   const text = (kind==="long" ? `${starter} ${coreLine}` : `${starter}`);
-  return clamp(extraFollow ? `${text} ${follow}` : text);
+  if (wantFollow){
+    const follow = rnd(block.follow);
+    return clamp(`${text} ${follow}`);
+  }
+  return clamp(text);
 }
 
 /* ---------- Router ---------- */
@@ -209,19 +205,19 @@ function routeReply({ message, history }){
   const alreadyWho   = hasConfirmed(history, "who");
   const alreadyValue = hasConfirmed(history, "value");
 
-  /* 0) Closers: if Detective states policy correctly */
+  // 0) Closers: if Detective states policy correctly
   if (detectiveGaveCorrectPolicy(message)) {
     return { reply: rnd(CLOSERS) };
   }
 
-  /* 1) Greetings first — reply from greeting bank and stop */
+  // 1) Greetings first
   const g = detectGreetingIntent(message);
   if (g){
     const toneBlock = GREET[g.kind][tone] || GREET[g.kind].neutral;
     return { reply: rnd(toneBlock) };
   }
 
-  /* 2) Tone hard-limits */
+  // 2) Tone hard-limits
   if (tone === "aggressive") {
     return { reply: rnd(BANK.aggressive.short) };
   }
@@ -229,12 +225,12 @@ function routeReply({ message, history }){
     return { reply: rnd(BANK.accusatory.shutdown) };
   }
 
-  /* 3) Yes/No style */
+  // 3) Yes/No style
   if (isYesNo(message)) {
     return { reply: compose(tone, "short") };
   }
 
-  /* 4) Explain/Tell me (one nugget only) */
+  // 4) Explain/Tell me (one nugget only, with gentle follow-up)
   if (isExplain(message)) {
     if (!alreadyWho)   return { reply: compose(tone, "long", FACT_LINES.who, true) };
     if (!alreadyValue) return { reply: compose(tone, "long", FACT_LINES.value, true) };
@@ -242,11 +238,11 @@ function routeReply({ message, history }){
     return { reply: compose(tone, "long", rnd(next), true) };
   }
 
-  /* 5) Direct facts */
+  // 5) Direct facts
   if (asksWho(message))   return { reply: compose(tone, "long", FACT_LINES.who) };
   if (asksValue(message)) return { reply: compose(tone, "long", FACT_LINES.value) };
 
-  /* 6) After BOTH facts are confirmed → nudge for policy decision */
+  // 6) After BOTH facts are confirmed → nudge for policy decision
   if (alreadyWho && alreadyValue) {
     const askDo = [
       "What would you like me to do under the ABC policy?",
@@ -259,11 +255,11 @@ function routeReply({ message, history }){
     return { reply: rnd(askDo) };
   }
 
-  /* 7) Fallback: reveal a single missing fact */
+  // 7) Fallback: reveal a single missing fact
   if (!alreadyWho)   return { reply: compose(tone, "long", FACT_LINES.who) };
   if (!alreadyValue) return { reply: compose(tone, "long", FACT_LINES.value) };
 
-  /* 8) Final fallback */
+  // 8) Final fallback
   return { reply: compose(tone, "short", "", true) };
 }
 
