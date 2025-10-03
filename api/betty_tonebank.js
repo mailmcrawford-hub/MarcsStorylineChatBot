@@ -1,7 +1,6 @@
 // /api/betty_tonebank.js
-// Betty — guided flow with clear end-of-conversation and restart support.
+// Betty — guided flow with clear end-of-conversation + restart support + anti-stall nudge.
 // Returns { ok:true, reply, done?:true, marker? }.
-// If done===true, disable input in Storyline. If you send "restart", a fresh chat begins.
 
 "use strict";
 
@@ -29,17 +28,6 @@ function isNegative(msg){
   const m = norm(msg);
   return /^(no|nope|nah|not really|doesn'?t|isn'?t|fine|ok(ay)?)\b/.test(m) ||
          /(within (policy|limits)|seems fine|acceptable)/i.test(m);
-}
-
-/* ----------------- Tone (light) ---------------- */
-function detectTone(msg){
-  const m = norm(msg);
-  if (/(!{2,}|ridiculous|unbelievable|\bnow\b.*\banswer\b)/i.test(msg) || /(shut up|listen|answer me)/i.test(m)) return "aggressive";
-  if (/(you (should|must)|you knew|why did you|against policy|breach|violate)/i.test(m)) return "accusatory";
-  if (/(asap|quick|hurry|right now|urgent)/i.test(m)) return "rushed";
-  if (/(could you|please|thanks|thank you|appreciate)/i.test(m)) return "polite";
-  if (/(\?|help me understand|clarify|explain)/i.test(m)) return "probing";
-  return "neutral";
 }
 
 /* ----------------- Greetings ---------------- */
@@ -128,7 +116,6 @@ const ASK_WHAT_NOW_IF_OK = [
   "Shall I tell my manager anyway?"
 ];
 
-/* Single-point nudges */
 const NUDGE_SINGLE = [
   "Shall I start with who sent it?",
   "Would you like the value first?",
@@ -186,15 +173,24 @@ function isTimingAsk(msg){
 }
 
 /* ----------------- Stage detection from history ---------------- */
+function countOccur(re, text){
+  const s = String(text||""); let c=0, m; const g=new RegExp(re.source, re.flags.includes('g')?re.flags:re.flags+'g');
+  while((m=g.exec(s))!==null){ c++; if(g.lastIndex===m.index) g.lastIndex++; }
+  return c;
+}
 function stageFromHistory(historyText){
   const h = norm(historyText||"");
   const saidDescribe = /(luxury.*hamper|premium hamper|high-end hamper)/i.test(historyText||"");
   const saidWhoWhy   = /(clientco.*raj|raj.*clientco|locking in the renewal)/i.test(historyText||"");
-  const askedWrong   = /(did i do something wrong|breached the rules|problem under abc|wrong call|against our policy|cross a line|should i not have accepted)/i.test(h);
-  const askedWhatDo  = /(what should i have done|correct step|how should i have handled|proper process|right way to deal)/i.test(h);
+  const askedWrongRe = /(did i do something wrong|breached the rules|problem under abc|wrong call|against our policy|cross a line|should i not have accepted)/i;
+  const askedWhatRe  = /(what should i have done|correct step|how should i have handled|proper process|right way to deal)/i;
+  const askedWrong   = askedWrongRe.test(h);
+  const askedWhatDo  = askedWhatRe.test(h);
+  const askedWrongCount = countOccur(askedWrongRe, h);
+  const askedWhatDoCount = countOccur(askedWhatRe, h);
   const nudgedOnce   = /(shall i start with who sent it\?|would you like the value first\?|shall i give you the timing\?|do you want what the card said\?)/i.test(h);
   const closed       = /<<CONVO_CLOSED>>/i.test(h);
-  return { saidDescribe, saidWhoWhy, askedWrong, askedWhatDo, nudgedOnce, closed };
+  return { saidDescribe, saidWhoWhy, askedWrong, askedWhatDo, askedWrongCount, askedWhatDoCount, nudgedOnce, closed };
 }
 
 /* ----------------- Router ---------------- */
@@ -257,6 +253,10 @@ function routeReply({ message, history }){
 
   // If we already asked “what should I have done?”, we want a policy statement
   if (stage.askedWhatDo) {
+    // If asked more than once without policy, give a precise hint and ask for confirmation
+    if (stage.askedWhatDoCount >= 2) {
+      return { reply: "ABC expects: disclose over £25, avoid gifts near decisions, and return or donate while notifying your manager. Is that correct?" };
+    }
     return { reply: "What does ABC require here—disclose anything over £25, avoid gifts tied to a decision, then return or donate and notify your manager?" };
   }
 
