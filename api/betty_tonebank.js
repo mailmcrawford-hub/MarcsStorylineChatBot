@@ -1,14 +1,7 @@
 // /api/betty_tonebank.js
-// Betty — conversation flow tuned to your spec.
-// Flow:
-// 1) Detective greets → Betty greets & asks how she can help
-// 2) Detective asks open "tell/explain about the hamper" → Betty describes WHAT + VALUE, then gently asks if something is wrong
-// 3) If Detective asks WHO gave it → Betty answers WHO/WHY (+ timing) and asks if something is wrong
-// 4) Detective response:
-//    - If it references policy → Betty acknowledges breach/lesson and closes positively
-//    - If affirmative/critical but no policy → Betty asks "What should I have done?"
-//    - If negative/unsure → Betty asks for clarity or what to do now (log/disclose)
-// 5) If still no policy stated → Betty loops once with a clear nudge, not a hard repeat (no stuck loops)
+// Betty — guided flow with clear end-of-conversation.
+// Returns { ok:true, reply, done?:true }.
+// Storyline: if done===true, disable input / end the chat.
 
 "use strict";
 
@@ -80,7 +73,7 @@ const GREET = {
   ]
 };
 
-/* ----------------- Scenario facts (what/value, who/why, timing) ---------------- */
+/* ----------------- Scenario facts ---------------- */
 const FACTS = {
   describeHamper: [
     "It’s a luxury food and wine hamper, roughly £150–£220.",
@@ -99,7 +92,7 @@ const FACTS = {
   ]
 };
 
-/* ----------------- Banks for the flow ---------------- */
+/* ----------------- Flow banks ---------------- */
 const ASK_IF_WRONG = [
   "Did I do something wrong there?",
   "Does that sound like I breached the rules?",
@@ -135,7 +128,7 @@ const ASK_WHAT_NOW_IF_OK = [
   "Shall I tell my manager anyway?"
 ];
 
-/* Single-point nudges (fallbacks) */
+/* Single-point nudges */
 const NUDGE_SINGLE = [
   "Shall I start with who sent it?",
   "Would you like the value first?",
@@ -143,12 +136,16 @@ const NUDGE_SINGLE = [
   "Do you want what the card said?"
 ];
 
-/* Positive, policy-aware closers (when Detective states the rule) */
+/* Successful closers (policy is stated correctly) */
 const CLOSERS = [
+  // neutral close
   "Thanks, Detective — that’s clear. I’ll file the disclosure, donate the hamper, and keep my manager in the loop.",
   "Appreciate the guidance. I’ll disclose it today and arrange a donation so there’s no perception of influence.",
   "Cheers — understood. I’ll submit the form, log it properly and make sure my manager is notified.",
-  "Thanks for setting that out plainly. I’ll record it, donate the hamper and follow the ABC rules going forward."
+  // return variant
+  "Got it — I’ll file the disclosure, return the hamper, and update my manager.",
+  // short wrap
+  "Understood. I’ll disclose, donate, and stick to the rules going forward."
 ];
 
 /* ----------------- Policy recognition (for close) ---------------- */
@@ -169,9 +166,8 @@ function detectiveGaveCorrectPolicy(message){
   );
 }
 
-/* ----------------- Intent detectors to fit your script ---------------- */
+/* ----------------- Intent detectors ---------------- */
 function isOpenDescribeAsk(msg){
-  // “tell me about / explain … hamper”
   const m = norm(msg);
   return /(tell me|explain).*(hamper)/i.test(m);
 }
@@ -192,7 +188,7 @@ function isTimingAsk(msg){
   return /(when|what day|what date|how long).*(arrive|delivered|received|turn.*up)/i.test(m);
 }
 
-/* ----------------- Stage detection from history (light) ---------------- */
+/* ----------------- Stage detection from history ---------------- */
 function stageFromHistory(historyText){
   const h = norm(historyText||"");
   const saidDescribe = /(luxury.*hamper|premium hamper|high-end hamper)/i.test(historyText||"");
@@ -200,19 +196,24 @@ function stageFromHistory(historyText){
   const askedWrong   = /(did i do something wrong|breached the rules|problem under abc|wrong call|against our policy|cross a line|should i not have accepted)/i.test(h);
   const askedWhatDo  = /(what should i have done|correct step|how should i have handled|proper process|right way to deal)/i.test(h);
   const nudgedOnce   = /(shall i start with who sent it\?|would you like the value first\?|shall i give you the timing\?|do you want what the card said\?)/i.test(h);
-  return { saidDescribe, saidWhoWhy, askedWrong, askedWhatDo, nudgedOnce };
+  const closed       = /<<CONVO_CLOSED>>/i.test(h);
+  return { saidDescribe, saidWhoWhy, askedWrong, askedWhatDo, nudgedOnce, closed };
 }
 
 /* ----------------- Router ---------------- */
 function routeReply({ message, history }){
-  // 0) Immediate close if Detective states policy correctly
-  if (detectiveGaveCorrectPolicy(message)) {
-    return { reply: rnd(CLOSERS) };
+  // If Storyline passes history with closure marker, stop responding
+  const stage = stageFromHistory(history||"");
+  if (stage.closed) {
+    return { reply: "", done: true };
   }
 
-  const stage = stageFromHistory(history||"");
+  // Immediate close if Detective states policy correctly this turn
+  if (detectiveGaveCorrectPolicy(message)) {
+    return { reply: rnd(CLOSERS), done: true, closeMarker: true };
+  }
 
-  // 1) Greetings
+  // Greetings
   const g = detectGreetingIntent(message);
   if (g){
     if (g.kind === "hi")        return { reply: rnd(GREET.hi) };
@@ -220,19 +221,19 @@ function routeReply({ message, history }){
     if (g.kind === "thanks")    return { reply: rnd(GREET.thanks) };
   }
 
-  // 2) Open “tell/explain about the hamper” -> WHAT + VALUE + ask if wrong
+  // Open “tell/explain about the hamper” -> WHAT + VALUE + ask if wrong
   if (isOpenDescribeAsk(message)) {
     const line = rnd(FACTS.describeHamper);
     return { reply: `${line} ${rnd(ASK_IF_WRONG)}` };
   }
 
-  // 3) Short mention “hamper?” -> brief WHAT (+ optional value) then ask if wrong
+  // Short “hamper?” -> brief WHAT then ask if wrong (if not already asked)
   if (isShortHamperAsk(message) && !stage.saidDescribe) {
     const line = rnd(FACTS.describeHamper);
     return { reply: `${line} ${rnd(ASK_IF_WRONG)}` };
   }
 
-  // 4) WHO / WHY / CARD / TIMING -> answer then ask if wrong (once)
+  // WHO / WHY / CARD / TIMING -> answer then ask if wrong (once)
   if (isWhoAsk(message) || isWhyOrCardAsk(message) || isTimingAsk(message) || (stage.saidDescribe && !stage.saidWhoWhy)) {
     const bits = [ rnd(FACTS.whoWhy) ];
     if (Math.random() < 0.5) bits.push(rnd(FACTS.timing));
@@ -240,31 +241,28 @@ function routeReply({ message, history }){
     return { reply: `${bits.join(" ")}${ask}`.trim() };
   }
 
-  // 5) Detective’s response after “Did I do something wrong?”
+  // After “Did I do something wrong?”
   if (stage.askedWrong && (isYesNoStart(message) || isAffirmative(message) || isNegative(message))) {
     if (detectiveGaveCorrectPolicy(message)) {
-      return { reply: rnd(CLOSERS) };
+      return { reply: rnd(CLOSERS), done: true, closeMarker: true };
     }
-    if (isAffirmative(message)) {
-      return { reply: rnd(ASK_WHAT_SHOULD_I_HAVE_DONE) };
-    }
-    if (isNegative(message)) {
-      return { reply: rnd(ASK_WHAT_NOW_IF_OK) };
-    }
+    if (isAffirmative(message))  return { reply: rnd(ASK_WHAT_SHOULD_I_HAVE_DONE) };
+    if (isNegative(message))     return { reply: rnd(ASK_WHAT_NOW_IF_OK) };
     return { reply: rnd(ASK_FOR_CLARITY) };
   }
 
-  // 6) If we already asked “what should I have done?”, we’re waiting for a policy statement → nudge clearly
+  // If we already asked “what should I have done?”, we want a policy statement
   if (stage.askedWhatDo) {
+    // Give a crisp nudge that primes the success criteria
     return { reply: "What does ABC require here—disclose anything over £25, avoid gifts tied to a decision, then return or donate and notify your manager?" };
   }
 
-  // 7) Forward-driving nudges if conversation is off-track:
+  // Forward-driving nudges if off-track:
   if (!stage.saidDescribe) return { reply: `${rnd(FACTS.describeHamper)} ${rnd(ASK_IF_WRONG)}` };
   if (!stage.saidWhoWhy)   return { reply: `${rnd(FACTS.whoWhy)} ${rnd(ASK_IF_WRONG)}` };
   if (!stage.askedWrong)   return { reply: rnd(ASK_IF_WRONG) };
 
-  // 8) Final fallback: single, purposeful nudge
+  // Final fallback
   if (!stage.nudgedOnce) return { reply: rnd(NUDGE_SINGLE) };
   return { reply: rnd(ASK_FOR_CLARITY) };
 }
@@ -275,6 +273,7 @@ function handler(req, res){
   if (req.method === "OPTIONS") return res.status(200).end();
 
   if (req.method === "GET") {
+    // Health check / initial load
     return res.status(200).json({ ok:true, reply: "Hi Detective, Betty here. How can I help?" });
   }
 
@@ -290,8 +289,14 @@ function handler(req, res){
     const message = String(body.message||"");
     const history = String(body.history||"");
 
-    const { reply } = routeReply({ message, history });
-    return res.status(200).json({ ok:true, reply: clamp(reply) });
+    const { reply, done, closeMarker } = routeReply({ message, history });
+
+    // When closing, we send done:true. Storyline can add a history marker so subsequent calls stop.
+    const payload = closeMarker
+      ? { ok:true, reply: clamp(reply), done: true, marker: "<<CONVO_CLOSED>>" }
+      : { ok:true, reply: clamp(reply), done: !!done };
+
+    return res.status(200).json(payload);
   }catch(e){
     return res.status(200).json({ ok:false, reply:"", error:"Server error." });
   }
