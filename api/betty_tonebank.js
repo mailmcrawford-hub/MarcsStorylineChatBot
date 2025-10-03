@@ -1,6 +1,14 @@
 // /api/betty_tonebank.js
-// Betty — tone-bank bot with stage progression. Returns { ok:true, reply }.
-// Flow: GREET → DESCRIBE → WHO/WHY → DID I DO WRONG? → YES/NO → WHAT SHOULD I HAVE DONE? → POLICY CLOSE
+// Betty — conversation flow tuned to your spec.
+// Flow:
+// 1) Detective greets → Betty greets & asks how she can help
+// 2) Detective asks open "tell/explain about the hamper" → Betty describes WHAT + VALUE, then gently asks if something is wrong
+// 3) If Detective asks WHO gave it → Betty answers WHO/WHY (+ timing) and asks if something is wrong
+// 4) Detective response:
+//    - If it references policy → Betty acknowledges breach/lesson and closes positively
+//    - If affirmative/critical but no policy → Betty asks "What should I have done?"
+//    - If negative/unsure → Betty asks for clarity or what to do now (log/disclose)
+// 5) If still no policy stated → Betty loops once with a clear nudge, not a hard repeat (no stuck loops)
 
 "use strict";
 
@@ -19,16 +27,15 @@ const norm  = (s) => (s==null ? "" : String(s)).toLowerCase();
 const rnd   = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const isYesNoStart = (m) => /^\s*(do|does|did|is|are|am|can|could|may|might|will|would|have|has|had|should)\b/i.test((m||"").trim());
 
-/* Affirmative/negative detectors for the Detective’s answer */
 function isAffirmative(msg){
   const m = norm(msg);
-  return /^(yes|yep|yeah|correct|right)\b/.test(m) ||
+  return /^(yes|yep|yeah|correct|right|it is|it was)\b/.test(m) ||
          /(breach|wrong|against|not allowed|shouldn'?t|cannot|can'?t|over the threshold|linked to (decision|tender|renewal))/i.test(m);
 }
 function isNegative(msg){
   const m = norm(msg);
-  return /^(no|nope|nah|not really|doesn'?t|isn'?t)\b/.test(m) ||
-         /(within (policy|limits)|seems fine|okay|acceptable)/i.test(m);
+  return /^(no|nope|nah|not really|doesn'?t|isn'?t|fine|ok(ay)?)\b/.test(m) ||
+         /(within (policy|limits)|seems fine|acceptable)/i.test(m);
 }
 
 /* ----------------- Tone (light) ---------------- */
@@ -53,12 +60,27 @@ function detectGreetingIntent(message){
 }
 
 const GREET = {
-  hi:        ["Hi Detective—Betty here. How can I help?","Hello—what would you like to know about the hamper?","Hi—ready when you are.","Hello—happy to chat.","Hi—fire away.","Hi there—what’s your first question?"],
-  howareyou: ["I’m well, thanks—what would you like to know about the hamper?","Doing fine—how can I help today?","Good, thank you—what should we cover first?","All good—what’s your question?","I’m okay—how can I help?","Doing well—what would you like to ask?"],
-  thanks:    ["You’re welcome—anything else you need?","No problem—happy to help.","Glad to help—what next?","Any time—do you want me to log it?","Of course—what else?","You’re welcome—what next?"]
+  hi: [
+    "Hi Detective—Betty here. How can I help?",
+    "Hello—what would you like to know about the hamper?",
+    "Hi—ready when you are.",
+    "Hello—happy to chat.",
+    "Hi—fire away."
+  ],
+  howareyou: [
+    "I’m well, thanks—what would you like to know about the hamper?",
+    "Doing fine—how can I help today?",
+    "Good, thank you—what should we cover first?",
+    "All good—what’s your question?"
+  ],
+  thanks: [
+    "You’re welcome—anything else you need?",
+    "No problem—happy to help.",
+    "Glad to help—what next?"
+  ]
 };
 
-/* ----------------- Scenario facts ---------------- */
+/* ----------------- Scenario facts (what/value, who/why, timing) ---------------- */
 const FACTS = {
   describeHamper: [
     "It’s a luxury food and wine hamper, roughly £150–£220.",
@@ -77,27 +99,43 @@ const FACTS = {
   ]
 };
 
-/* ----------------- Banks that drive the endgame ---------------- */
+/* ----------------- Banks for the flow ---------------- */
 const ASK_IF_WRONG = [
-  "Did I do something wrong there?","Does that sound like I breached the rules?","Was accepting it a problem under ABC?",
-  "Do you think that was out of bounds?","Would that count as a breach?","Was I off-side taking it?",
-  "Is that against our policy?","Should I not have accepted it?","Was that the wrong call?",
-  "Did that cross a line?","Is that considered non-compliant?","Would Compliance see that as an issue?"
+  "Did I do something wrong there?",
+  "Does that sound like I breached the rules?",
+  "Was accepting it a problem under ABC?",
+  "Would that count as a breach?",
+  "Is that against our policy?",
+  "Should I not have accepted it?",
+  "Was that the wrong call?",
+  "Did that cross a line?",
+  "Would Compliance see that as an issue?"
 ];
 
 const ASK_WHAT_SHOULD_I_HAVE_DONE = [
-  "Okay—what should I have done instead?","Right—what would have been the correct step?","Understood—how should I have handled it?",
-  "Got it—what should I have done at the time?","Fair point—what was the proper process?","Okay—what’s the right way to deal with this?",
-  "Right—what actions should I have taken?","Understood—what’s the correct policy step?","Okay—what would you expect me to do?",
-  "Thanks—what should I have done under ABC?"
+  "Okay—what should I have done instead?",
+  "Right—what would have been the correct step?",
+  "Understood—how should I have handled it?",
+  "Got it—what should I have done at the time?",
+  "Fair point—what was the proper process?",
+  "Okay—what’s the right way to deal with this?"
+];
+
+const ASK_FOR_CLARITY = [
+  "Could you say which part conflicts with ABC?",
+  "Which rule does this touch—value, timing, or intent?",
+  "What’s the policy concern—over the threshold, tied to a decision, or something else?",
+  "Is the issue the timing, the value, or the note on the card?"
 ];
 
 const ASK_WHAT_NOW_IF_OK = [
-  "Thanks—do you still want me to disclose or log it?","Alright—should I record it just to be safe?","Okay—do you want me to note it in the register?",
-  "Got it—would you like me to tell my manager anyway?","Understood—do you want me to file a quick disclosure?","Okay—shall I donate it and record that?",
-  "Thanks—want me to add a short entry to the register?","Alright—do you want any follow-up from me now?"
+  "Do you still want me to disclose or log it?",
+  "Should I record it just to be safe?",
+  "Do you want me to note it in the register?",
+  "Shall I tell my manager anyway?"
 ];
 
+/* Single-point nudges (fallbacks) */
 const NUDGE_SINGLE = [
   "Shall I start with who sent it?",
   "Would you like the value first?",
@@ -105,26 +143,12 @@ const NUDGE_SINGLE = [
   "Do you want what the card said?"
 ];
 
-/* Softer variants for sharp tone (used only if nothing else matched) */
-const SOFT_ACCUSATORY = [
-  "Happy to help—shall I start with who sent it?",
-  "I want to make this useful—would you like the value first?",
-  "I can cover the basics—do you want the timing?"
-];
-const SOFT_AGGRESSIVE = [
-  "I’m here to help—shall I start with who sent it?",
-  "Let’s keep it simple—would you like the value first?",
-  "I can begin with the timing if you want."
-];
-
-/* Successful closers when the Detective states policy */
+/* Positive, policy-aware closers (when Detective states the rule) */
 const CLOSERS = [
   "Thanks, Detective — that’s clear. I’ll file the disclosure, donate the hamper, and keep my manager in the loop.",
   "Appreciate the guidance. I’ll disclose it today and arrange a donation so there’s no perception of influence.",
   "Cheers — understood. I’ll submit the form, log it properly and make sure my manager is notified.",
-  "Thanks for setting that out plainly. I’ll record it, donate the hamper and follow the ABC rules going forward.",
-  "Got it — I’ll disclose, donate, and keep to policy next time. Thanks for the steer.",
-  "Thank you — I’ll handle this by the book and keep the policy top of mind with clients."
+  "Thanks for setting that out plainly. I’ll record it, donate the hamper and follow the ABC rules going forward."
 ];
 
 /* ----------------- Policy recognition (for close) ---------------- */
@@ -145,101 +169,104 @@ function detectiveGaveCorrectPolicy(message){
   );
 }
 
-/* ----------------- Intent detectors ---------------- */
-function isHamperDescriptionAsk(msg){
+/* ----------------- Intent detectors to fit your script ---------------- */
+function isOpenDescribeAsk(msg){
+  // “tell me about / explain … hamper”
   const m = norm(msg);
-  return /(tell me|what|describe|explain).*(hamper)/i.test(m) ||
-         /^hamper\??$/.test(m) ||
-         /(what.*gift|what.*was it|about the hamper)/i.test(m);
+  return /(tell me|explain).*(hamper)/i.test(m);
 }
-function isWhoWhyProbe(msg){
+function isShortHamperAsk(msg){
   const m = norm(msg);
-  return /(who (sent|gave|provided)|who.*(sender|from)|who arranged)/i.test(m) ||
-         /(why.*(send|gift)|what.*reason|card.*say|note.*say|what.*was the card|what.*note)/i.test(m) ||
-         /(how.*came about|how.*come to be|how.*ended up)/i.test(m);
+  return /(hamper\??|about the hamper|what.*was it|what.*gift)/i.test(m);
 }
-function isTimingProbe(msg){
-  return /(when|what day|what date|how long).*(arrive|delivered|received|turn.*up)/i.test(norm(msg));
+function isWhoAsk(msg){
+  const m = norm(msg);
+  return /(who (sent|gave|provided)|who.*(sender|from)|who arranged)/i.test(m);
+}
+function isWhyOrCardAsk(msg){
+  const m = norm(msg);
+  return /(why.*(send|gift)|what.*reason|card.*say|note.*say)/i.test(m);
+}
+function isTimingAsk(msg){
+  const m = norm(msg);
+  return /(when|what day|what date|how long).*(arrive|delivered|received|turn.*up)/i.test(m);
 }
 
-/* ----------------- Stage detection from history ---------------- */
-function detectStage(historyText){
-  const h = norm(historyText || "");
-
-  const hasGreet     = /(hi detective|hello—what would you like|betty here)/i.test(historyText||"");
+/* ----------------- Stage detection from history (light) ---------------- */
+function stageFromHistory(historyText){
+  const h = norm(historyText||"");
   const saidDescribe = /(luxury.*hamper|premium hamper|high-end hamper)/i.test(historyText||"");
   const saidWhoWhy   = /(clientco.*raj|raj.*clientco|locking in the renewal)/i.test(historyText||"");
-  const askedWrong   = /(did i do something wrong|breached the rules|was.*a problem under abc|cross a line|against our policy|should i not have accepted)/i.test(h);
+  const askedWrong   = /(did i do something wrong|breached the rules|problem under abc|wrong call|against our policy|cross a line|should i not have accepted)/i.test(h);
   const askedWhatDo  = /(what should i have done|correct step|how should i have handled|proper process|right way to deal)/i.test(h);
-  const nudgedOnce   = /(shall i start with who sent it\?|would you like the value first\?|shall i give you the timing\?|do you want what the card said\?)/i.test(historyText||"");
-
-  return {
-    hasGreet, saidDescribe, saidWhoWhy, askedWrong, askedWhatDo, nudgedOnce
-  };
+  const nudgedOnce   = /(shall i start with who sent it\?|would you like the value first\?|shall i give you the timing\?|do you want what the card said\?)/i.test(h);
+  return { saidDescribe, saidWhoWhy, askedWrong, askedWhatDo, nudgedOnce };
 }
 
 /* ----------------- Router ---------------- */
 function routeReply({ message, history }){
-  const tone = detectTone(message);
+  // 0) Immediate close if Detective states policy correctly
+  if (detectiveGaveCorrectPolicy(message)) {
+    return { reply: rnd(CLOSERS) };
+  }
 
-  // 0) Close if Detective states policy correctly
-  if (detectiveGaveCorrectPolicy(message)) return { reply: rnd(CLOSERS) };
+  const stage = stageFromHistory(history||"");
 
-  const stage = detectStage(history);
-
-  // 1) Greetings always answered
+  // 1) Greetings
   const g = detectGreetingIntent(message);
   if (g){
-    if (!stage.hasGreet && g.kind === "hi")        return { reply: rnd(GREET.hi) };
+    if (g.kind === "hi")        return { reply: rnd(GREET.hi) };
     if (g.kind === "howareyou") return { reply: rnd(GREET.howareyou) };
     if (g.kind === "thanks")    return { reply: rnd(GREET.thanks) };
   }
 
-  // 2) Core intents: ANSWER FIRST and advance toward next stage
-  if (isHamperDescriptionAsk(message) || (!stage.saidDescribe && !stage.saidWhoWhy)) {
-    // If we haven't described yet, do it.
-    return { reply: rnd(FACTS.describeHamper) };
+  // 2) Open “tell/explain about the hamper” -> WHAT + VALUE + ask if wrong
+  if (isOpenDescribeAsk(message)) {
+    const line = rnd(FACTS.describeHamper);
+    return { reply: `${line} ${rnd(ASK_IF_WRONG)}` };
   }
 
-  if (isWhoWhyProbe(message) || (stage.saidDescribe && !stage.saidWhoWhy)) {
-    // Give who/why (+ maybe timing) then ask "did I do wrong?" (but only once)
-    const whoWhy = rnd(FACTS.whoWhy);
-    const maybeTiming = Math.random() < 0.5 ? " " + rnd(FACTS.timing) : "";
+  // 3) Short mention “hamper?” -> brief WHAT (+ optional value) then ask if wrong
+  if (isShortHamperAsk(message) && !stage.saidDescribe) {
+    const line = rnd(FACTS.describeHamper);
+    return { reply: `${line} ${rnd(ASK_IF_WRONG)}` };
+  }
+
+  // 4) WHO / WHY / CARD / TIMING -> answer then ask if wrong (once)
+  if (isWhoAsk(message) || isWhyOrCardAsk(message) || isTimingAsk(message) || (stage.saidDescribe && !stage.saidWhoWhy)) {
+    const bits = [ rnd(FACTS.whoWhy) ];
+    if (Math.random() < 0.5) bits.push(rnd(FACTS.timing));
     const ask = stage.askedWrong ? "" : " " + rnd(ASK_IF_WRONG);
-    return { reply: (whoWhy + maybeTiming + ask).trim() };
+    return { reply: `${bits.join(" ")}${ask}`.trim() };
   }
 
-  if (isTimingProbe(message)) {
-    // If timing asked, still progress to wrong-question if not asked yet
-    const ask = stage.askedWrong ? "" : " " + rnd(ASK_IF_WRONG);
-    return { reply: (rnd(FACTS.timing) + ask).trim() };
-  }
-
-  // 3) Yes/No turn in response to "Did I do wrong?"
+  // 5) Detective’s response after “Did I do something wrong?”
   if (stage.askedWrong && (isYesNoStart(message) || isAffirmative(message) || isNegative(message))) {
-    if (isAffirmative(message))  return { reply: rnd(ASK_WHAT_SHOULD_I_HAVE_DONE) };
-    if (isNegative(message))     return { reply: rnd(ASK_WHAT_NOW_IF_OK) };
-    return { reply: "Could you clarify—was that a breach or okay under ABC?" };
+    if (detectiveGaveCorrectPolicy(message)) {
+      return { reply: rnd(CLOSERS) };
+    }
+    if (isAffirmative(message)) {
+      return { reply: rnd(ASK_WHAT_SHOULD_I_HAVE_DONE) };
+    }
+    if (isNegative(message)) {
+      return { reply: rnd(ASK_WHAT_NOW_IF_OK) };
+    }
+    return { reply: rnd(ASK_FOR_CLARITY) };
   }
 
-  // 4) If we already asked “what should I have done?”, we are waiting for a policy statement.
+  // 6) If we already asked “what should I have done?”, we’re waiting for a policy statement → nudge clearly
   if (stage.askedWhatDo) {
-    // Nudge gently toward an explicit rule statement
-    return { reply: "What does the ABC policy require in this situation—disclose and return or donate, and notify your manager?" };
+    return { reply: "What does ABC require here—disclose anything over £25, avoid gifts tied to a decision, then return or donate and notify your manager?" };
   }
 
-  // 5) Soft tone nudges ONLY if nothing matched; prefer single next step
-  if (!stage.saidDescribe) return { reply: rnd(FACTS.describeHamper) };        // advance
-  if (!stage.saidWhoWhy)   return { reply: rnd(NUDGE_SINGLE) };                // request who/why detail
-  if (!stage.askedWrong)   return { reply: rnd(ASK_IF_WRONG) };                // ask the pivotal question
+  // 7) Forward-driving nudges if conversation is off-track:
+  if (!stage.saidDescribe) return { reply: `${rnd(FACTS.describeHamper)} ${rnd(ASK_IF_WRONG)}` };
+  if (!stage.saidWhoWhy)   return { reply: `${rnd(FACTS.whoWhy)} ${rnd(ASK_IF_WRONG)}` };
+  if (!stage.askedWrong)   return { reply: rnd(ASK_IF_WRONG) };
 
-  // If we’re past wrong-question but no yes/no recognised, ask for that explicitly.
-  if (stage.askedWrong)    return { reply: "Was accepting it against policy, yes or no?" };
-
-  // Fallback: ultra soft by tone
-  if (tone === "aggressive")  return { reply: rnd(SOFT_AGGRESSIVE) };
-  if (tone === "accusatory")  return { reply: rnd(SOFT_ACCUSATORY) };
-  return { reply: rnd(NUDGE_SINGLE) };
+  // 8) Final fallback: single, purposeful nudge
+  if (!stage.nudgedOnce) return { reply: rnd(NUDGE_SINGLE) };
+  return { reply: rnd(ASK_FOR_CLARITY) };
 }
 
 /* ----------------- HTTP handler ---------------- */
