@@ -1,6 +1,7 @@
 // /api/betty_tonebank.js
-// Betty — guided flow with clear end-of-conversation + restart support + anti-stall nudge.
+// Betty — guided flow with clean close, proposal-confirm endgame, and restart support.
 // Returns { ok:true, reply, done?:true, marker? }.
+// If done===true, end the chat in Storyline. Type "restart" to begin a new chat.
 
 "use strict";
 
@@ -21,12 +22,12 @@ const isYesNoStart = (m) => /^\s*(do|does|did|is|are|am|can|could|may|might|will
 
 function isAffirmative(msg){
   const m = norm(msg);
-  return /^(yes|yep|yeah|correct|right|it is|it was)\b/.test(m) ||
+  return /^(yes|yep|yeah|correct|right|ok(ay)?|fine|please (do|go ahead)|do it|go ahead)\b/.test(m) ||
          /(breach|wrong|against|not allowed|shouldn'?t|cannot|can'?t|over the threshold|linked to (decision|tender|renewal))/i.test(m);
 }
 function isNegative(msg){
   const m = norm(msg);
-  return /^(no|nope|nah|not really|doesn'?t|isn'?t|fine|ok(ay)?)\b/.test(m) ||
+  return /^(no|nope|nah|not really|don'?t|do not)\b/.test(m) ||
          /(within (policy|limits)|seems fine|acceptable)/i.test(m);
 }
 
@@ -123,7 +124,15 @@ const NUDGE_SINGLE = [
   "Do you want what the card said?"
 ];
 
-/* Successful closers (policy is stated correctly) */
+/* --- Proposal (action the Detective can confirm to close) --- */
+const PROPOSE_ACTION = [
+  "I can file the disclosure, donate the hamper, and notify my manager—shall I do that now?",
+  "I’ll submit the disclosure, arrange a donation, and loop in my manager—do you want me to proceed?",
+  "I can record it today, donate or return the hamper, and inform my manager—should I go ahead?",
+  "I’ll file the form, donate the hamper, and keep my manager updated—okay to proceed?"
+];
+
+/* Successful closers (policy is stated or proposal is confirmed) */
 const CLOSERS = [
   "Thanks, Detective — that’s clear. I’ll file the disclosure, donate the hamper, and keep my manager in the loop.",
   "Appreciate the guidance. I’ll disclose it today and arrange a donation so there’s no perception of influence.",
@@ -184,13 +193,17 @@ function stageFromHistory(historyText){
   const saidWhoWhy   = /(clientco.*raj|raj.*clientco|locking in the renewal)/i.test(historyText||"");
   const askedWrongRe = /(did i do something wrong|breached the rules|problem under abc|wrong call|against our policy|cross a line|should i not have accepted)/i;
   const askedWhatRe  = /(what should i have done|correct step|how should i have handled|proper process|right way to deal)/i;
+  const proposalRe   = /(file (the )?disclosure.*(donate|return).*(notify|manager)|submit the disclosure.*(donation|donate).*(manager)|record it.*(donate|return).*(inform my manager)|file the form.*(donate|return).*(manager)|okay to proceed\?|shall i do that now\?|should i go ahead\?)/i;
+
   const askedWrong   = askedWrongRe.test(h);
   const askedWhatDo  = askedWhatRe.test(h);
   const askedWrongCount = countOccur(askedWrongRe, h);
   const askedWhatDoCount = countOccur(askedWhatRe, h);
+  const proposedOnce = proposalRe.test(h);
+
   const nudgedOnce   = /(shall i start with who sent it\?|would you like the value first\?|shall i give you the timing\?|do you want what the card said\?)/i.test(h);
   const closed       = /<<CONVO_CLOSED>>/i.test(h);
-  return { saidDescribe, saidWhoWhy, askedWrong, askedWhatDo, askedWrongCount, askedWhatDoCount, nudgedOnce, closed };
+  return { saidDescribe, saidWhoWhy, askedWrong, askedWhatDo, askedWrongCount, askedWhatDoCount, proposedOnce, nudgedOnce, closed };
 }
 
 /* ----------------- Router ---------------- */
@@ -241,23 +254,45 @@ function routeReply({ message, history }){
     return { reply: `${bits.join(" ")}${ask}`.trim() };
   }
 
-  // After “Did I do something wrong?”
+  // After “Did I do something wrong?”:
+  // A) Detective confirms breach (affirmative/critical) but hasn't stated policy → propose concrete action
   if (stage.askedWrong && (isYesNoStart(message) || isAffirmative(message) || isNegative(message))) {
+
+    // If policy is stated, close immediately
     if (detectiveGaveCorrectPolicy(message)) {
       return { reply: rnd(CLOSERS), done: true, closeMarker: true };
     }
-    if (isAffirmative(message))  return { reply: rnd(ASK_WHAT_SHOULD_I_HAVE_DONE) };
-    if (isNegative(message))     return { reply: rnd(ASK_WHAT_NOW_IF_OK) };
+
+    // Affirmative breach acknowledgement path
+    if (isAffirmative(message)) {
+      // If we've already proposed action and the detective says yes/ok → close
+      if (stage.proposedOnce) {
+        return { reply: rnd(CLOSERS), done: true, closeMarker: true };
+      }
+      // Otherwise propose the specific action for a simple yes/no
+      return { reply: rnd(PROPOSE_ACTION) };
+    }
+
+    // Negative/unsure path → nudge to minimal next step
+    if (isNegative(message)) {
+      return { reply: rnd(ASK_WHAT_NOW_IF_OK) };
+    }
+
+    // Ambiguous yes/no starter → ask for clarity
     return { reply: rnd(ASK_FOR_CLARITY) };
   }
 
-  // If we already asked “what should I have done?”, we want a policy statement
+  // If we already asked “what should I have done?”, we want a policy statement.
+  // To avoid loops, give a crisp hint once, then close on confirmation.
   if (stage.askedWhatDo) {
-    // If asked more than once without policy, give a precise hint and ask for confirmation
-    if (stage.askedWhatDoCount >= 2) {
-      return { reply: "ABC expects: disclose over £25, avoid gifts near decisions, and return or donate while notifying your manager. Is that correct?" };
+    if (stage.proposedOnce) {
+      // A proposal was made previously; if the detective is now affirmative, close.
+      if (isAffirmative(message)) {
+        return { reply: rnd(CLOSERS), done: true, closeMarker: true };
+      }
     }
-    return { reply: "What does ABC require here—disclose anything over £25, avoid gifts tied to a decision, then return or donate and notify your manager?" };
+    // Provide a precise hint and ask for confirmation → next affirmative will close
+    return { reply: "ABC expects: disclose over £25, avoid gifts near decisions, and return or donate while notifying your manager. Is that correct?" };
   }
 
   // Forward-driving nudges if off-track:
@@ -265,7 +300,7 @@ function routeReply({ message, history }){
   if (!stage.saidWhoWhy)   return { reply: `${rnd(FACTS.whoWhy)} ${rnd(ASK_IF_WRONG)}` };
   if (!stage.askedWrong)   return { reply: rnd(ASK_IF_WRONG) };
 
-  // Final fallback
+  // Final fallback: single, purposeful nudge
   if (!stage.nudgedOnce) return { reply: rnd(NUDGE_SINGLE) };
   return { reply: rnd(ASK_FOR_CLARITY) };
 }
@@ -276,7 +311,6 @@ function handler(req, res){
   if (req.method === "OPTIONS") return res.status(200).end();
 
   if (req.method === "GET") {
-    // Health check / initial load
     return res.status(200).json({ ok:true, reply: "Hi Detective, Betty here. How can I help?" });
   }
 
