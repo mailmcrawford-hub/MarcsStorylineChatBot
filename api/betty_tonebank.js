@@ -1,7 +1,7 @@
 // /api/betty_tonebank.js
-// Betty — guided flow with clear end-of-conversation.
-// Returns { ok:true, reply, done?:true }.
-// Storyline: if done===true, disable input / end the chat.
+// Betty — guided flow with clear end-of-conversation and restart support.
+// Returns { ok:true, reply, done?:true, marker? }.
+// If done===true, disable input in Storyline. If you send "restart", a fresh chat begins.
 
 "use strict";
 
@@ -138,13 +138,10 @@ const NUDGE_SINGLE = [
 
 /* Successful closers (policy is stated correctly) */
 const CLOSERS = [
-  // neutral close
   "Thanks, Detective — that’s clear. I’ll file the disclosure, donate the hamper, and keep my manager in the loop.",
   "Appreciate the guidance. I’ll disclose it today and arrange a donation so there’s no perception of influence.",
   "Cheers — understood. I’ll submit the form, log it properly and make sure my manager is notified.",
-  // return variant
   "Got it — I’ll file the disclosure, return the hamper, and update my manager.",
-  // short wrap
   "Understood. I’ll disclose, donate, and stick to the rules going forward."
 ];
 
@@ -202,9 +199,16 @@ function stageFromHistory(historyText){
 
 /* ----------------- Router ---------------- */
 function routeReply({ message, history }){
-  // If Storyline passes history with closure marker, stop responding
   const stage = stageFromHistory(history||"");
+
+  // Allow restart after a closed chat
   if (stage.closed) {
+    if (/restart|new chat|start over/i.test(message)) {
+      return { reply: "Starting a fresh chat. How can I help?", done: false };
+    }
+    if (detectGreetingIntent(message)) {
+      return { reply: "We’ve wrapped this case. Type “restart” to start a new chat.", done: true };
+    }
     return { reply: "", done: true };
   }
 
@@ -253,7 +257,6 @@ function routeReply({ message, history }){
 
   // If we already asked “what should I have done?”, we want a policy statement
   if (stage.askedWhatDo) {
-    // Give a crisp nudge that primes the success criteria
     return { reply: "What does ABC require here—disclose anything over £25, avoid gifts tied to a decision, then return or donate and notify your manager?" };
   }
 
