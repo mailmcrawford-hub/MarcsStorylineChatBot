@@ -1,24 +1,33 @@
 // /api/betty_structured.js
-// Scenario-aware interview bot (Betty/Freda) for Storyline.
+// Scenario-aware interview bot for Storyline (Betty/Freda).
 // Returns JSON: { ok:true, json:{ reply_text, tone_detected, stance, policy_points_referenced[], risk_flags[], next_questions_for_detective[], memory_updates[], suggested_stage_transition } }
 
+"use strict";
+
+/* ---------------- CORS ---------------- */
 function setCORS(res){
-  res.setHeader("Access-Control-Allow-Origin","*");
-  res.setHeader("Access-Control-Allow-Methods","GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers","Content-Type, Accept");
+  try{
+    res.setHeader("Access-Control-Allow-Origin","*");
+    res.setHeader("Access-Control-Allow-Methods","GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers","Content-Type, Accept");
+  }catch{}
 }
 
-// Optional banks (qaPairs, persona openers). Safe defaults if not present.
-let BANK = null;
-try { BANK = require("./betty_banks"); }
-catch { BANK = { qaPairs: [], greetings: [], persona:{ openers:["Hi Detective, how can I help?"] } }; }
+/* ---------------- Banks (optional) ---------------- */
+let BANK = { qaPairs: [], greetings: [], persona:{ openers:["Hi Detective, how can I help?"] } };
+try {
+  // If you have api/betty_banks.js with module.exports, this will load it.
+  const loaded = require("./betty_banks");
+  if (loaded && typeof loaded === "object") BANK = { ...BANK, ...loaded };
+} catch (_) { /* safe fallback */ }
 
+/* ---------------- Persona ---------------- */
 const PERSONAE = {
   Betty: { name: "Betty Morales", role: "Sales Executive at Acme Things Ltd." },
   Freda: { name: "Freda Morales", role: "Sales Executive at Acme Things Ltd." }
 };
 
-// Grounding facts (canonical)
+/* ---------------- Canonical facts ---------------- */
 const FACTS = {
   gift: "luxury food and wine hamper",
   sender: "ClientCo (arranged by Raj)",
@@ -30,16 +39,16 @@ const FACTS = {
   disclosureFiled: false
 };
 
-// Policy gist
+/* ---------------- Policy gist ---------------- */
 const POLICY = {
   giftApprovalThreshold: 25,
   actions: ["disclosure", "return", "donate", "manager notification"]
 };
 
-/* ---------------- helpers ---------------- */
+/* ---------------- Helpers ---------------- */
 const MAX_FIELD_CHARS = 600;
-const clamp = s => (s||"").toString().slice(0, MAX_FIELD_CHARS);
-const norm  = s => (s||"").toLowerCase();
+const clamp = (s) => (s==null ? "" : String(s)).slice(0, MAX_FIELD_CHARS);
+const norm  = (s) => (s==null ? "" : String(s)).toLowerCase();
 
 function toneDetect(msg){
   const m = norm(msg);
@@ -47,45 +56,47 @@ function toneDetect(msg){
   if (/(policy|section|per|threshold|disclosure form|compliance)/.test(m)) return "legalistic";
   if (/(why did you|you should|you realise|breach|violate|against|wrong)/.test(m)) return "accusatory";
   if (/(can you walk me|talk me through|help me understand|could you explain|what happened)/.test(m) || (m.match(/\?/g)||[]).length>=2) return "probing";
-  if (/(thanks|thank you|appreciate|that helps|no worries|we’ll sort this)/.test(m)) return "supportive";
+  if (/(thanks|thank you|appreciate|that helps|no worries|we'll sort this)/.test(m)) return "supportive";
   return "neutral";
 }
 function stanceFromTone(t, history){
+  const h = norm(history);
   if (t==="accusatory") return "defensive";
-  if (/disclosure|over\s*25|return|donate|manager/i.test(history||"")) return "cooperative";
+  if (/disclosure|over\s*25|return|donate|manager/.test(h)) return "cooperative";
   if (t==="probing"||t==="neutral") return "curious";
   if (t==="legalistic") return "minimizing";
   return "cooperative";
 }
 function risksFromContext(message){
-  const risks = [];
-  risks.push("high_value_gift(£150–£220)");
-  risks.push("near_decision_timing(2_weeks_pre_renewal)");
-  risks.push("explicit_intent_card('locking in the renewal')");
-  risks.push("no_disclosure_filed");
+  const risks = new Set([
+    "high_value_gift(£150–£220)",
+    "near_decision_timing(2_weeks_pre_renewal)",
+    "explicit_intent_card('locking in the renewal')",
+    "no_disclosure_filed"
+  ]);
   const m = norm(message);
-  if (/(influence|lock in|win.*renewal|secure.*deal)/.test(m)) risks.push("appearance_of_influence");
-  if (/(keep|accept|take)/.test(m) && /(gift|hamper|wine)/.test(m)) risks.push("acceptance_without_approval");
-  return risks;
+  if (/(influence|lock in|win.*renewal|secure.*deal)/.test(m)) risks.add("appearance_of_influence");
+  if (/(keep|accept|take)/.test(m) && /(gift|hamper|wine)/.test(m)) risks.add("acceptance_without_approval");
+  return Array.from(risks);
 }
 function mentions(msg, re){ return re.test(norm(msg)); }
 
-// GREETING detector
+// Greetings (prevents info-dump on “Hi”)
 function isGreeting(msg){
-  const m = (msg||"").toLowerCase().trim();
+  const m = norm(msg).trim();
   return /^(hi|hello|hey|hiya|howdy|good (morning|afternoon|evening))\b/.test(m) ||
          /^(thanks|thank you)$/.test(m);
 }
 
 /* ---------- token utils for QA matching ---------- */
 const stopwords = new Set("the a an and or but if then so to of for on in at by from with as is are was were be been being do does did have has had you your we our us it this that those these there here what when where why how can may should could would will".split(" "));
-function cleanForTokens(s){ return (s||"").toLowerCase().replace(/[^a-z0-9£ ]+/g," ").replace(/\s+/g," ").trim(); }
+function cleanForTokens(s){ return (s==null ? "" : String(s)).toLowerCase().replace(/[^a-z0-9£ ]+/g," ").replace(/\s+/g," ").trim(); }
 function tokens(s){ return new Set(cleanForTokens(s).split(" ").filter(Boolean).filter(w=>!stopwords.has(w))); }
 function jaccard(a,b){ if(!a.size||!b.size) return 0; let inter=0; for(const t of a){ if(b.has(t)) inter++; } return inter/(a.size+b.size-inter); }
 
 /* ---------- slot extraction ---------- */
 function getAmount(text){
-  const msg = text || "";
+  const msg = text==null ? "" : String(text);
   const m1 = msg.match(/£\s?(\d{1,5})(?:\.\d{1,2})?/i);
   if (m1) return Math.round(parseFloat(m1[1]));
   const m2 = msg.match(/\b(\d{1,5})\s*(?:quid|pounds|gbp)\b/i);
@@ -98,32 +109,34 @@ const mentionsOfficial = (m) => /(public\s*official|mayor|council|mp|soe|state[-
 
 /* ---------- QA matcher ---------- */
 function qaBestMatch(message){
-  const pairs = (BANK && Array.isArray(BANK.qaPairs)) ? BANK.qaPairs : [];
-  if (!pairs.length) return null;
+  try{
+    const pairs = (BANK && Array.isArray(BANK.qaPairs)) ? BANK.qaPairs : [];
+    if (!pairs.length) return null;
 
-  const qset = tokens(message);
-  let best = null, bestScore = 0;
+    const qset = tokens(message);
+    let best = null, bestScore = 0;
 
-  for (const pair of pairs){
-    if (!pair || !pair.q || !pair.a) continue;
-    const tset = tokens(pair.q);
-    let score = jaccard(qset, tset);
+    for (const pair of pairs){
+      if (!pair || !pair.q || !pair.a) continue;
+      const tset = tokens(pair.q);
+      let score = jaccard(qset, tset);
 
-    // slot boosts
-    const amtQ = getAmount(message), amtT = getAmount(pair.q);
-    if (amtQ && amtT && Math.abs(amtQ - amtT) <= 5) score += 0.2;
-    if (isDuringTender(message) && isDuringTender(pair.q)) score += 0.2;
-    if (mentionsOfficial(message) && mentionsOfficial(pair.q)) score += 0.2;
+      // slot boosts
+      const amtQ = getAmount(message), amtT = getAmount(pair.q);
+      if (amtQ && amtT && Math.abs(amtQ - amtT) <= 5) score += 0.2;
+      if (isDuringTender(message) && isDuringTender(pair.q)) score += 0.2;
+      if (mentionsOfficial(message) && mentionsOfficial(pair.q)) score += 0.2;
 
-    if (score > bestScore){ bestScore = score; best = pair; }
-  }
+      if (score > bestScore){ bestScore = score; best = pair; }
+    }
 
-  const confident = best && bestScore >= 0.55;
-  const shortQ    = cleanForTokens(message).split(" ").length <= 9 && bestScore >= 0.40;
-  return (confident || shortQ) ? best : null;
+    const confident = best && bestScore >= 0.55;
+    const shortQ    = cleanForTokens(message).split(" ").length <= 9 && bestScore >= 0.40;
+    return (confident || shortQ) ? best : null;
+  }catch{ return null; }
 }
 
-/* ---------- Specific scenario snippets (kept; rarely used here) ---------- */
+/* ---------- Specific scenario snippets (kept, but low priority) ---------- */
 const SCENARIOS = [
   { id:"tickets_tender", match:/ticket|match|football|game/i, also:/tender|rfp|bid/i,
     variants:[ "During tenders we avoid gifts and hospitality—even match tickets. We can meet after the award." ] },
@@ -133,13 +146,15 @@ const SCENARIOS = [
     variants:[ "Let’s pause and gather proper paperwork; offshore commissions need review before we proceed." ] }
 ];
 function detectScenario(message){
-  for (const sc of SCENARIOS){
-    if (sc.match.test(message) && (!sc.also || sc.also.test(message))) return sc;
-  }
+  try{
+    for (const sc of SCENARIOS){
+      if (sc.match.test(message) && (!sc.also || sc.also.test(message))) return sc;
+    }
+  }catch{}
   return null;
 }
 
-/* ---------- History fact-tracker: has this nugget appeared already? ---------- */
+/* ---------- History fact-tracker ---------- */
 const FACT_REGEX = {
   delivery: /(courier|reception)/i,
   sender: /(clientco|raj)/i,
@@ -153,26 +168,24 @@ function seen(history, key){
   const re = FACT_REGEX[key];
   return re ? re.test(h) : false;
 }
-
-// Return next unrevealed fact label + text (one nugget only)
 function nextUnrevealedFact(history){
   if (!seen(history,"delivery")) return ["delivery", `It came by courier to reception.`];
   if (!seen(history,"sender"))   return ["sender",   `ClientCo sent it—Raj arranged it.`];
   if (!seen(history,"timing"))   return ["timing",   `It arrived about two weeks before the renewal meeting.`];
-  if (!seen(history,"value"))    return ["value",    `It looked high-end, roughly £${FACTS.valueLow}–£${FACTS.valueHigh}.`];
+  if (!seen(history,"value"))    return ["value",    `About £${FACTS.valueLow}–£${FACTS.valueHigh}.`];
   if (!seen(history,"card"))     return ["card",     `The card said “${FACTS.card}”.`];
   if (!seen(history,"disclosed"))return ["disclosed",`I haven’t filed the disclosure yet.`];
   return [null, `Right—what would you like to check next?`];
 }
 
-/* ---------- Style: tone-aware microphrasing (kept concise) ---------- */
+/* ---------- Tone-aware microphrasing ---------- */
 function styleSentence(core, tone){
   switch(tone){
     case "supportive":  return `Sure—${core}`;
-    case "probing":     return core; // plain and direct
+    case "probing":     return core;
     case "legalistic":  return `For clarity: ${core}`;
-    case "rushed":      return core.replace(/^It /,""); // tighter
-    case "accusatory":  return `${core} I didn’t ask for it, but I get the concern.`;
+    case "rushed":      return core.replace(/^It /,"");
+    case "accusatory":  return `${core} I didn’t ask for it, but I understand the concern.`;
     default:            return core;
   }
 }
@@ -181,7 +194,7 @@ function styleSentence(core, tone){
    ANSWER-FIRST replyEngine (one-point answers, tone-aware)
    ======================================================================= */
 function replyEngine({persona, message, history}) {
-  const who = persona==="Freda" ? PERSONAE.Freda : PERSONAE.Betty;
+  const who = (persona==="Freda" ? PERSONAE.Freda : PERSONAE.Betty) || PERSONAE.Betty;
 
   // 0) Tone & stance
   const tone = toneDetect(message);
@@ -189,16 +202,15 @@ function replyEngine({persona, message, history}) {
 
   // GREETING → friendly open, no info-dump
   if (isGreeting(message)) {
-    const first = who.name.split(" ")[0];
-    const reply = `Hi Detective, ${first} here. What would you like to know about the hamper?`;
-    return pack(reply, "stay");
+    const first = (who.name||"Betty").split(" ")[0];
+    return pack(`Hi Detective, ${first} here. What would you like to know about the hamper?`, "stay");
   }
 
   // Shared containers
   const m = norm(message);
   const ppSet   = new Set();
   const flags   = new Set(risksFromContext(message));
-  const nextQs  = [];  // at most one
+  const nextQs  = [];
   const memory  = [];
   let stage     = "stay";
 
@@ -215,13 +227,13 @@ function replyEngine({persona, message, history}) {
     stance = "cooperative";
   }
 
-  // 1) Scenario snippets (rare)
+  // 1) Specific scenarios (rare)
   const sc = detectScenario(message);
   if (sc){
     return pack(sc.variants[0], "advance");
   }
 
-  // 2) Authored QA pairs (exact answers)
+  // 2) Authored QA pairs (highest precision)
   const qa = qaBestMatch(message);
   if (qa){
     if (/disclos/.test(qa.a)) addPP("use_disclosure_form");
@@ -230,7 +242,7 @@ function replyEngine({persona, message, history}) {
     return pack(qa.a, "stay");
   }
 
-  // 3) Slot-aware one-point answers by question type
+  // 3) Slot-aware one-point answers
 
   // Facts / “what happened?”
   if (/(what.*happened|tell.*about|how.*came|who sent|when.*delivered)/i.test(m)) {
@@ -263,20 +275,19 @@ function replyEngine({persona, message, history}) {
 
   // Keep / accept / what to do
   if (/(keep|accept|take|hold onto)/i.test(m) && /(gift|hamper|wine)/i.test(m)) {
-    let reply = "";
     if (publicOfficial) {
-      reply = `Only token items are okay with officials; I’ll disclose and return or donate it.`;
+      const reply = styleSentence(`Only token items are okay with officials; I’ll disclose and return or donate it.`, tone);
       addPP("use_disclosure_form","return_or_donate_when_in_doubt","notify_manager");
-      return pack(styleSentence(reply,tone), "escalate_to_policy_coaching");
+      return pack(reply, "escalate_to_policy_coaching");
     }
     if (duringTender || /(renewal|decision)/i.test(m) || (amt && amt>POLICY.giftApprovalThreshold)) {
-      reply = `Given the timing and value, I shouldn’t keep it. I’ll disclose and donate it.`;
+      const reply = styleSentence(`Given the timing and value, I shouldn’t keep it. I’ll disclose and donate it.`, tone);
       addPP("gifts_tied_to_decisions_prohibited","use_disclosure_form","return_or_donate_when_in_doubt","notify_manager");
-      return pack(styleSentence(reply,tone), "escalate_to_policy_coaching");
+      return pack(reply, "escalate_to_policy_coaching");
     }
-    reply = `If it wasn’t pre-approved, I should disclose and return or donate it.`;
+    const reply = styleSentence(`If it wasn’t pre-approved, I should disclose and return or donate it.`, tone);
     addPP("use_disclosure_form","return_or_donate_when_in_doubt","notify_manager");
-    return pack(styleSentence(reply,tone), "advance");
+    return pack(reply, "advance");
   }
 
   // Why different from dinners?
@@ -293,7 +304,7 @@ function replyEngine({persona, message, history}) {
     return pack(reply, "close_and_commit");
   }
 
-  // 4) One-point fallback: reveal the next missing nugget only
+  // Fallback: reveal ONE new nugget only
   {
     const [label, nugget] = nextUnrevealedFact(history);
     if (label) memory.push("facts_confirmed:"+label);
@@ -306,7 +317,7 @@ function replyEngine({persona, message, history}) {
   function pack(text, nextStage){
     let out = clamp(text);
 
-    // If accusatory tone and not yet cooperative, keep a light defensive note (single clause)
+    // If accusatory tone and not yet cooperative, keep a light defensive clause
     if (tone==="accusatory" && stance!=="cooperative" && !/concern\.$/.test(out)){
       out = clamp(out + " I didn’t ask for it, but I understand the concern.");
       stance = "defensive";
@@ -317,7 +328,10 @@ function replyEngine({persona, message, history}) {
     if (/return|donate/.test(out)) ppSet.add("return_or_donate_when_in_doubt");
     if (/manager/.test(out)) ppSet.add("notify_manager");
 
-    const dedupe = arr => Array.from(new Set(arr)).map(clamp);
+    const dedupe = (arr) => Array.from(new Set(arr)).map(clamp);
+
+    // Merge explicit flags with any inferred from reply text
+    const mergedFlags = new Set([ ...flags, ...risksFromContext(out) ]);
 
     return {
       persona: who.name,
@@ -325,31 +339,40 @@ function replyEngine({persona, message, history}) {
       tone_detected: tone,
       stance,
       policy_points_referenced: dedupe(Array.from(ppSet)),
-      risk_flags: dedupe(Array.from(risksFromContext(text)).concat(Array.from(flags))),
-      next_questions_for_detective: (nextQs.slice(0,1)).map(clamp),
-      memory_updates: memory.map(clamp),
+      risk_flags: dedupe(Array.from(mergedFlags)),
+      next_questions_for_detective: dedupe(nextQs.slice(0,1)),
+      memory_updates: dedupe(memory),
       suggested_stage_transition: (nextStage || "stay")
     };
   }
 }
 
 /* ---------------- HTTP handler ---------------- */
-module.exports = function handler(req, res){
+function handler(req, res){
   setCORS(res);
+  if (!req || !res) return;
+
   if (req.method==="OPTIONS") return res.status(200).end();
-  if (req.method!=="POST") return res.status(405).json({ ok:false, error:"Method not allowed" });
+  if (req.method!=="POST")  return res.status(405).json({ ok:false, error:"Method not allowed" });
 
   try{
-    let body = req.body || {};
-    if (typeof body === "string"){ try { body = JSON.parse(body); } catch { body = {}; } }
+    let body = req.body;
+    if (typeof body === "string"){
+      try { body = JSON.parse(body); } catch { body = {}; }
+    }
+    if (!body || typeof body !== "object") body = {};
 
     const persona = (body.persona==="Freda") ? "Freda" : "Betty";
-    const message = (body.message||"").toString();
-    const history = (body.history||"").toString();
+    const message = (body.message==null ? "" : String(body.message));
+    const history = (body.history==null ? "" : String(body.history));
 
     const json = replyEngine({ persona, message, history });
     return res.status(200).json({ ok:true, json });
   }catch(e){
+    // Never throw raw errors—always return JSON so Storyline can handle it.
     return res.status(200).json({ ok:false, error:"Server error processing your message." });
   }
-};
+}
+
+module.exports = handler;          // CommonJS
+module.exports.default = handler;  // ESM compatibility (Vercel)
