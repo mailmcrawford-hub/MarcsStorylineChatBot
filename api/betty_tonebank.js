@@ -1,5 +1,7 @@
 // /api/betty_tonebank.js
-// Betty — guided flow with clean close, proposal-confirm endgame, and restart support.
+// Betty — guided flow with clean close, proposal-confirm endgame, restart support,
+// and closing-praise detection (e.g., "good job betty", "well done betty").
+//
 // Returns { ok:true, reply, done?:true, marker? }.
 // If done===true, end the chat in Storyline. Type "restart" to begin a new chat.
 
@@ -31,7 +33,7 @@ function isNegative(msg){
          /(within (policy|limits)|seems fine|acceptable)/i.test(m);
 }
 
-/* ----------------- Greetings ---------------- */
+/* ----------------- Greetings / Thanks ---------------- */
 function detectGreetingIntent(message){
   const t = (message||"").trim();
   const m = norm(t);
@@ -39,6 +41,12 @@ function detectGreetingIntent(message){
   if (/(how (are|r) (you|u)|how's it going|how are things|you ok\??|you doing ok\??)/i.test(m)) return { kind:"howareyou" };
   if (/^(thanks|thank you|cheers|much appreciated)[.!]?$/.test(t) || /(thanks|thank you|cheers|appreciate that)/i.test(m)) return { kind:"thanks" };
   return null;
+}
+
+/* NEW: “closing praise” detector → close immediately with a closer */
+function isClosingPraise(message){
+  const m = norm(message||"");
+  return /(thank(s| you)(,?\s*betty)?|cheers(,?\s*betty)?|good job(,?\s*betty)?|well done(,?\s*betty)?|nice work|ok(ay)?(,?\s*betty)?|brilliant|great,?\s*thanks|that helps|all (good|set)|sorted|appreciate it|much obliged|understood,?\s*thanks|got it,?\s*thanks|we'?re done|case closed)/i.test(m);
 }
 
 const GREET = {
@@ -226,6 +234,11 @@ function routeReply({ message, history }){
     return { reply: rnd(CLOSERS), done: true, closeMarker: true };
   }
 
+  // NEW: Close on “closing praise” (congratulatory/thanks) near the end or anytime after a proposal
+  if (isClosingPraise(message) && (stage.proposedOnce || stage.askedWhatDo || stage.askedWrong || stage.saidWhoWhy || stage.saidDescribe)) {
+    return { reply: rnd(CLOSERS), done: true, closeMarker: true };
+  }
+
   // Greetings
   const g = detectGreetingIntent(message);
   if (g){
@@ -254,8 +267,7 @@ function routeReply({ message, history }){
     return { reply: `${bits.join(" ")}${ask}`.trim() };
   }
 
-  // After “Did I do something wrong?”:
-  // A) Detective confirms breach (affirmative/critical) but hasn't stated policy → propose concrete action
+  // After “Did I do something wrong?”: affirmative/negative/ambiguous handling
   if (stage.askedWrong && (isYesNoStart(message) || isAffirmative(message) || isNegative(message))) {
 
     // If policy is stated, close immediately
@@ -263,35 +275,29 @@ function routeReply({ message, history }){
       return { reply: rnd(CLOSERS), done: true, closeMarker: true };
     }
 
-    // Affirmative breach acknowledgement path
+    // Affirmative breach acknowledgement → propose concrete action (then close on OK)
     if (isAffirmative(message)) {
-      // If we've already proposed action and the detective says yes/ok → close
       if (stage.proposedOnce) {
         return { reply: rnd(CLOSERS), done: true, closeMarker: true };
       }
-      // Otherwise propose the specific action for a simple yes/no
       return { reply: rnd(PROPOSE_ACTION) };
     }
 
-    // Negative/unsure path → nudge to minimal next step
+    // Negative/unsure → light next step
     if (isNegative(message)) {
       return { reply: rnd(ASK_WHAT_NOW_IF_OK) };
     }
 
-    // Ambiguous yes/no starter → ask for clarity
+    // Ambiguous yes/no starter → clarify
     return { reply: rnd(ASK_FOR_CLARITY) };
   }
 
   // If we already asked “what should I have done?”, we want a policy statement.
-  // To avoid loops, give a crisp hint once, then close on confirmation.
+  // Provide a precise hint and ask for confirmation → next affirmative will close.
   if (stage.askedWhatDo) {
-    if (stage.proposedOnce) {
-      // A proposal was made previously; if the detective is now affirmative, close.
-      if (isAffirmative(message)) {
-        return { reply: rnd(CLOSERS), done: true, closeMarker: true };
-      }
+    if (stage.proposedOnce && isAffirmative(message)) {
+      return { reply: rnd(CLOSERS), done: true, closeMarker: true };
     }
-    // Provide a precise hint and ask for confirmation → next affirmative will close
     return { reply: "ABC expects: disclose over £25, avoid gifts near decisions, and return or donate while notifying your manager. Is that correct?" };
   }
 
