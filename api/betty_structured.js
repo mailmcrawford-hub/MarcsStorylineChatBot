@@ -1,5 +1,5 @@
 // /api/betty_structured.js
-// Structured, scenario-aware interview bot for Storyline (Betty or Freda).
+// Scenario-aware interview bot (Betty/Freda) for Storyline.
 // Returns JSON: { ok:true, json:{ reply_text, tone_detected, stance, policy_points_referenced[], risk_flags[], next_questions_for_detective[], memory_updates[], suggested_stage_transition } }
 
 function setCORS(res){
@@ -8,32 +8,31 @@ function setCORS(res){
   res.setHeader("Access-Control-Allow-Headers","Content-Type, Accept");
 }
 
-// Optional: authored Q&A and phrasing banks (qaPairs lives here)
+// Optional banks (qaPairs, persona openers). Safe defaults if not present.
 let BANK = null;
-try { BANK = require("./betty_banks"); } catch { BANK = { qaPairs: [], greetings: [], persona:{ openers:["Hi Detective, how can I help?"] } }; }
+try { BANK = require("./betty_banks"); }
+catch { BANK = { qaPairs: [], greetings: [], persona:{ openers:["Hi Detective, how can I help?"] } }; }
 
 const PERSONAE = {
   Betty: { name: "Betty Morales", role: "Sales Executive at Acme Things Ltd." },
   Freda: { name: "Freda Morales", role: "Sales Executive at Acme Things Ltd." }
 };
 
-// Grounding facts (scenario)
+// Grounding facts (canonical)
 const FACTS = {
   gift: "luxury food and wine hamper",
   sender: "ClientCo (arranged by Raj)",
   delivery: "courier to Acme office",
   timing: "two weeks before a renewal decision meeting",
-  valueRange: [150,220],
+  valueLow: 150,
+  valueHigh: 220,
   card: "locking in the renewal",
-  disclosureFiled: false,
-  mentionedInChat: true
+  disclosureFiled: false
 };
 
 // Policy gist
 const POLICY = {
   giftApprovalThreshold: 25,
-  requireDisclosureOver: 25,
-  giftsLinkedToDecisionProhibited: true,
   actions: ["disclosure", "return", "donate", "manager notification"]
 };
 
@@ -69,19 +68,9 @@ function risksFromContext(message){
   if (/(keep|accept|take)/.test(m) && /(gift|hamper|wine)/.test(m)) risks.push("acceptance_without_approval");
   return risks;
 }
-function policyPoints(msg){
-  const pts = [];
-  const m = norm(msg);
-  if (/(25|£25|twenty[- ]?five)/.test(m)) pts.push("gifts_over_25_require_pre-approval_disclosure");
-  if (/(renewal|decision|approval meeting|tender|rfp|bid)/.test(m)) pts.push("gifts_tied_to_decisions_prohibited");
-  if (/(disclose|disclosure|form)/.test(m)) pts.push("use_disclosure_form");
-  if (/(return|donate)/.test(m)) pts.push("return_or_donate_when_in_doubt");
-  if (/(notify|tell|manager)/.test(m)) pts.push("notify_manager");
-  return pts;
-}
 function mentions(msg, re){ return re.test(norm(msg)); }
 
-// GREETING detector (prevents scene recap on “Hi”)
+// GREETING detector
 function isGreeting(msg){
   const m = (msg||"").toLowerCase().trim();
   return /^(hi|hello|hey|hiya|howdy|good (morning|afternoon|evening))\b/.test(m) ||
@@ -94,7 +83,7 @@ function cleanForTokens(s){ return (s||"").toLowerCase().replace(/[^a-z0-9£ ]+/
 function tokens(s){ return new Set(cleanForTokens(s).split(" ").filter(Boolean).filter(w=>!stopwords.has(w))); }
 function jaccard(a,b){ if(!a.size||!b.size) return 0; let inter=0; for(const t of a){ if(b.has(t)) inter++; } return inter/(a.size+b.size-inter); }
 
-/* ---------- slot extraction for QA boost & rules ---------- */
+/* ---------- slot extraction ---------- */
 function getAmount(text){
   const msg = text || "";
   const m1 = msg.match(/£\s?(\d{1,5})(?:\.\d{1,2})?/i);
@@ -107,7 +96,7 @@ function getAmount(text){
 const isDuringTender   = (m) => /(tender|rfp|bid|decision meeting|renewal)/i.test(norm(m||""));
 const mentionsOfficial = (m) => /(public\s*official|mayor|council|mp|soe|state[-\s]*owned)/i.test(norm(m||""));
 
-/* ---------- QA matcher (uses your BANK.qaPairs if present) ---------- */
+/* ---------- QA matcher ---------- */
 function qaBestMatch(message){
   const pairs = (BANK && Array.isArray(BANK.qaPairs)) ? BANK.qaPairs : [];
   if (!pairs.length) return null;
@@ -120,7 +109,7 @@ function qaBestMatch(message){
     const tset = tokens(pair.q);
     let score = jaccard(qset, tset);
 
-    // slot-aware boosts
+    // slot boosts
     const amtQ = getAmount(message), amtT = getAmount(pair.q);
     if (amtQ && amtT && Math.abs(amtQ - amtT) <= 5) score += 0.2;
     if (isDuringTender(message) && isDuringTender(pair.q)) score += 0.2;
@@ -134,20 +123,14 @@ function qaBestMatch(message){
   return (confident || shortQ) ? best : null;
 }
 
-/* ---------- Specific scenario snippets (before general Q&A) ---------- */
+/* ---------- Specific scenario snippets (kept; rarely used here) ---------- */
 const SCENARIOS = [
-  { id:"tickets_tender",
-    match:/ticket|match|football|game/i, also:/tender|rfp|bid/i,
-    variants:[ "During tenders we avoid gifts and hospitality—even match tickets. We can meet after the award." ]
-  },
-  { id:"customs_speed_cash",
-    match:/customs|border|shipment/i, also:/cash|speed|fast|quick/i,
-    variants:[ "That sounds like a facilitation payment—I’d refuse and ask for the official process, then report it." ]
-  },
-  { id:"agent_offshore",
-    match:/agent|intermediary|consultant/i, also:/offshore|commission|percent|%/i,
-    variants:[ "Let’s pause and gather proper paperwork; offshore commissions need review before we proceed." ]
-  }
+  { id:"tickets_tender", match:/ticket|match|football|game/i, also:/tender|rfp|bid/i,
+    variants:[ "During tenders we avoid gifts and hospitality—even match tickets. We can meet after the award." ] },
+  { id:"customs_speed_cash", match:/customs|border|shipment/i, also:/cash|speed|fast|quick/i,
+    variants:[ "That sounds like a facilitation payment—I’d refuse and ask for the official process, then report it." ] },
+  { id:"agent_offshore", match:/agent|intermediary|consultant/i, also:/offshore|commission|percent|%/i,
+    variants:[ "Let’s pause and gather proper paperwork; offshore commissions need review before we proceed." ] }
 ];
 function detectScenario(message){
   for (const sc of SCENARIOS){
@@ -156,8 +139,46 @@ function detectScenario(message){
   return null;
 }
 
+/* ---------- History fact-tracker: has this nugget appeared already? ---------- */
+const FACT_REGEX = {
+  delivery: /(courier|reception)/i,
+  sender: /(clientco|raj)/i,
+  timing: /(two weeks.*renewal|before the renewal)/i,
+  value: /(£\s*1?50|£\s*2?20|150–220|150-220)/i,
+  card: /(locking in the renewal)/i,
+  disclosed: /(disclosure|disclosed|file the form|form now)/i
+};
+function seen(history, key){
+  const h = history || "";
+  const re = FACT_REGEX[key];
+  return re ? re.test(h) : false;
+}
+
+// Return next unrevealed fact label + text (one nugget only)
+function nextUnrevealedFact(history){
+  if (!seen(history,"delivery")) return ["delivery", `It came by courier to reception.`];
+  if (!seen(history,"sender"))   return ["sender",   `ClientCo sent it—Raj arranged it.`];
+  if (!seen(history,"timing"))   return ["timing",   `It arrived about two weeks before the renewal meeting.`];
+  if (!seen(history,"value"))    return ["value",    `It looked high-end, roughly £${FACTS.valueLow}–£${FACTS.valueHigh}.`];
+  if (!seen(history,"card"))     return ["card",     `The card said “${FACTS.card}”.`];
+  if (!seen(history,"disclosed"))return ["disclosed",`I haven’t filed the disclosure yet.`];
+  return [null, `Right—what would you like to check next?`];
+}
+
+/* ---------- Style: tone-aware microphrasing (kept concise) ---------- */
+function styleSentence(core, tone){
+  switch(tone){
+    case "supportive":  return `Sure—${core}`;
+    case "probing":     return core; // plain and direct
+    case "legalistic":  return `For clarity: ${core}`;
+    case "rushed":      return core.replace(/^It /,""); // tighter
+    case "accusatory":  return `${core} I didn’t ask for it, but I get the concern.`;
+    default:            return core;
+  }
+}
+
 /* =======================================================================
-   ANSWER-FIRST replyEngine (with greeting handler)
+   ANSWER-FIRST replyEngine (one-point answers, tone-aware)
    ======================================================================= */
 function replyEngine({persona, message, history}) {
   const who = persona==="Freda" ? PERSONAE.Freda : PERSONAE.Betty;
@@ -166,28 +187,18 @@ function replyEngine({persona, message, history}) {
   const tone = toneDetect(message);
   let stance = stanceFromTone(tone, history);
 
-  // GREETING → friendly open, no scenario recap
+  // GREETING → friendly open, no info-dump
   if (isGreeting(message)) {
     const first = who.name.split(" ")[0];
     const reply = `Hi Detective, ${first} here. What would you like to know about the hamper?`;
-    return {
-      persona: who.name,
-      reply_text: clamp(reply),
-      tone_detected: tone,
-      stance,
-      policy_points_referenced: [],
-      risk_flags: [],
-      next_questions_for_detective: [],
-      memory_updates: [],
-      suggested_stage_transition: "stay"
-    };
+    return pack(reply, "stay");
   }
 
   // Shared containers
   const m = norm(message);
   const ppSet   = new Set();
   const flags   = new Set(risksFromContext(message));
-  const nextQs  = [];   // at most one
+  const nextQs  = [];  // at most one
   const memory  = [];
   let stage     = "stay";
 
@@ -199,89 +210,95 @@ function replyEngine({persona, message, history}) {
   const publicOfficial= mentionsOfficial(message);
   const isQuestion    = /\?\s*$/.test(message) || /^(what|why|how|who|where|when|can|may|should|could|do|does|did|is|are|am)\b/i.test(m);
 
-  // If the learner just explained policy → cooperate
+  // If learner states policy clearly → cooperate
   if (/(over\s*25|£\s*25).*(disclosure|form)|gifts.*(decision|renewal).*prohibit|when in doubt.*(disclose|return|donate)/i.test(m)) {
     stance = "cooperative";
   }
 
-  // 1) Specific scenarios
+  // 1) Scenario snippets (rare)
   const sc = detectScenario(message);
   if (sc){
-    const reply = clamp(sc.variants[0]);
-    return pack(reply, "advance");
+    return pack(sc.variants[0], "advance");
   }
 
-  // 2) Authored QA pairs (highest precision, answer-first)
+  // 2) Authored QA pairs (exact answers)
   const qa = qaBestMatch(message);
   if (qa){
     if (/disclos/.test(qa.a)) addPP("use_disclosure_form");
     if (/return|donate/.test(qa.a)) addPP("return_or_donate_when_in_doubt");
     if (/(tender|rfp|bid|decision)/i.test(qa.a)) addPP("gifts_tied_to_decisions_prohibited");
-    return pack(clamp(qa.a), "stay");
+    return pack(qa.a, "stay");
   }
 
-  // 3) Slot-aware direct answers by question type (always answer first)
+  // 3) Slot-aware one-point answers by question type
 
-  // Facts / what happened
+  // Facts / “what happened?”
   if (/(what.*happened|tell.*about|how.*came|who sent|when.*delivered)/i.test(m)) {
-    const reply = `It arrived by courier to reception about two weeks before the renewal meeting. ClientCo sent it—Raj arranged it. The card mentioned “locking in the renewal”.`;
-    memory.push("facts_confirmed:delivery/sender/timing/card");
+    const [label, nugget] = nextUnrevealedFact(history);
+    if (label) memory.push("facts_confirmed:"+label);
+    const reply = styleSentence(nugget, tone);
+    if (isQuestion) nextQs.push("Want me to note that on the disclosure?");
     return pack(reply, "advance");
   }
 
   // Value
   if (/(how much|value|worth|price|estimate)/i.test(m)) {
-    const reply = `It looked like a high-end hamper, roughly £150–£220 with the wine.`;
-    memory.push("facts_confirmed:approx_value_150-220");
+    const nugget = `About £${FACTS.valueLow}–£${FACTS.valueHigh}.`;
+    const reply  = styleSentence(nugget, tone);
+    memory.push("facts_confirmed:value");
     addF("high_value_gift(£150–£220)");
-    if (isQuestion && !/disclos|form/.test(m)) nextQs.push("Do you want me to file the disclosure now?");
+    if (isQuestion) nextQs.push("Shall I file the disclosure now?");
     addPP("use_disclosure_form");
     return pack(reply, "advance");
   }
 
   // Disclosure / logging
   if (/(did you disclose|disclosure|form|register|log)/i.test(m)) {
-    const reply = `I haven’t filed the disclosure yet—I only mentioned it in team chat. I can complete the form now.`;
+    const reply = styleSentence(`I haven’t filed the disclosure yet.`, tone);
     memory.push("facts_confirmed:no_disclosure_filed");
     addPP("use_disclosure_form");
+    if (isQuestion) nextQs.push("Do you want me to submit it today?");
     return pack(reply, "advance");
   }
 
   // Keep / accept / what to do
   if (/(keep|accept|take|hold onto)/i.test(m) && /(gift|hamper|wine)/i.test(m)) {
+    let reply = "";
     if (publicOfficial) {
-      const reply = `Because it involves a public official, only token items are okay. I’ll disclose and return or donate it, and notify my manager.`;
+      reply = `Only token items are okay with officials; I’ll disclose and return or donate it.`;
       addPP("use_disclosure_form","return_or_donate_when_in_doubt","notify_manager");
-      return pack(reply, "escalate_to_policy_coaching");
+      return pack(styleSentence(reply,tone), "escalate_to_policy_coaching");
     }
     if (duringTender || /(renewal|decision)/i.test(m) || (amt && amt>POLICY.giftApprovalThreshold)) {
-      const reply = `Given the value and the renewal timing, I shouldn’t keep it. I’ll submit the disclosure and arrange to return or donate it, and notify my manager.`;
+      reply = `Given the timing and value, I shouldn’t keep it. I’ll disclose and donate it.`;
       addPP("gifts_tied_to_decisions_prohibited","use_disclosure_form","return_or_donate_when_in_doubt","notify_manager");
-      return pack(reply, "escalate_to_policy_coaching");
+      return pack(styleSentence(reply,tone), "escalate_to_policy_coaching");
     }
-    const reply = `If it isn’t approved in advance, I should disclose and return or donate it. I’ll loop in my manager.`;
+    reply = `If it wasn’t pre-approved, I should disclose and return or donate it.`;
     addPP("use_disclosure_form","return_or_donate_when_in_doubt","notify_manager");
-    return pack(reply, "advance");
+    return pack(styleSentence(reply,tone), "advance");
   }
 
   // Why different from dinners?
   if (/(why|how).*different.*(dinner|meal|hospitality)/i.test(m)) {
-    const reply = `Dinners can be pre-approved as hospitality, but the hamper is a gift tied to a decision and wasn’t disclosed. That’s why it’s riskier.`;
+    const reply = styleSentence(`Dinners can be pre-approved hospitality; this was a gift tied to a decision and not disclosed.`, tone);
     addPP("gifts_tied_to_decisions_prohibited","use_disclosure_form");
     return pack(reply, "advance");
   }
 
   // Next steps
   if (/(next step|what now|what should you do|what do i do|plan)/i.test(m)) {
-    const reply = `I’ll file the disclosure today, then donate the hamper to avoid any appearance of influence. I’ll also notify my manager.`;
+    const reply = styleSentence(`I’ll file the disclosure, donate the hamper, and notify my manager.`, tone);
     addPP("use_disclosure_form","return_or_donate_when_in_doubt","notify_manager");
     return pack(reply, "close_and_commit");
   }
 
-  // Generic fallback (still anchored to the scene)
+  // 4) One-point fallback: reveal the next missing nugget only
   {
-    const reply = `It was a ClientCo hamper delivered to reception, about £150–£220, two weeks before the renewal meeting. The card said “locking in the renewal”.`;
-    if (isQuestion && !/(value|worth|disclos|form)/i.test(m)) nextQs.push("Do you want the disclosure raised now and the hamper donated?");
+    const [label, nugget] = nextUnrevealedFact(history);
+    if (label) memory.push("facts_confirmed:"+label);
+    const reply = styleSentence(nugget, tone);
+    if (isQuestion && label!=="disclosed") nextQs.push("Do you want me to raise the disclosure now?");
     return pack(reply, "stay");
   }
 
@@ -289,28 +306,27 @@ function replyEngine({persona, message, history}) {
   function pack(text, nextStage){
     let out = clamp(text);
 
-    // If tone accusatory, allow a brief defensive note, but still comply
-    if (tone==="accusatory" && stance!=="cooperative"){
-      out += " I didn’t ask for it, but I understand the concern.";
+    // If accusatory tone and not yet cooperative, keep a light defensive note (single clause)
+    if (tone==="accusatory" && stance!=="cooperative" && !/concern\.$/.test(out)){
+      out = clamp(out + " I didn’t ask for it, but I understand the concern.");
       stance = "defensive";
     }
 
     // auto-add PP based on reply content
-    if (/disclos/.test(out)) addPP("use_disclosure_form");
-    if (/return|donate/.test(out)) addPP("return_or_donate_when_in_doubt");
-    if (/manager/.test(out)) addPP("notify_manager");
+    if (/disclos/.test(out)) ppSet.add("use_disclosure_form");
+    if (/return|donate/.test(out)) ppSet.add("return_or_donate_when_in_doubt");
+    if (/manager/.test(out)) ppSet.add("notify_manager");
 
-    // de-dupe & enforce field limits
     const dedupe = arr => Array.from(new Set(arr)).map(clamp);
 
     return {
       persona: who.name,
-      reply_text: clamp(out),
+      reply_text: out,
       tone_detected: tone,
       stance,
       policy_points_referenced: dedupe(Array.from(ppSet)),
-      risk_flags: dedupe(Array.from(flags)),
-      next_questions_for_detective: nextQs.slice(0,1).map(clamp),
+      risk_flags: dedupe(Array.from(risksFromContext(text)).concat(Array.from(flags))),
+      next_questions_for_detective: (nextQs.slice(0,1)).map(clamp),
       memory_updates: memory.map(clamp),
       suggested_stage_transition: (nextStage || "stay")
     };
