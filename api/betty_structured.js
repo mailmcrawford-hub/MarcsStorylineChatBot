@@ -16,7 +16,6 @@ function setCORS(res){
 /* ---------------- Banks (optional) ---------------- */
 let BANK = { qaPairs: [], greetings: [], persona:{ openers:["Hi Detective, how can I help?"] } };
 try {
-  // If you have api/betty_banks.js with module.exports, this will load it.
   const loaded = require("./betty_banks");
   if (loaded && typeof loaded === "object") BANK = { ...BANK, ...loaded };
 } catch (_) { /* safe fallback */ }
@@ -81,7 +80,7 @@ function risksFromContext(message){
 }
 function mentions(msg, re){ return re.test(norm(msg)); }
 
-// Greetings (prevents info-dump on “Hi”)
+// Greetings detector
 function isGreeting(msg){
   const m = norm(msg).trim();
   return /^(hi|hello|hey|hiya|howdy|good (morning|afternoon|evening))\b/.test(m) ||
@@ -121,7 +120,6 @@ function qaBestMatch(message){
       const tset = tokens(pair.q);
       let score = jaccard(qset, tset);
 
-      // slot boosts
       const amtQ = getAmount(message), amtT = getAmount(pair.q);
       if (amtQ && amtT && Math.abs(amtQ - amtT) <= 5) score += 0.2;
       if (isDuringTender(message) && isDuringTender(pair.q)) score += 0.2;
@@ -136,7 +134,7 @@ function qaBestMatch(message){
   }catch{ return null; }
 }
 
-/* ---------- Specific scenario snippets (kept, but low priority) ---------- */
+/* ---------- Specific scenario snippets ---------- */
 const SCENARIOS = [
   { id:"tickets_tender", match:/ticket|match|football|game/i, also:/tender|rfp|bid/i,
     variants:[ "During tenders we avoid gifts and hospitality—even match tickets. We can meet after the award." ] },
@@ -200,13 +198,39 @@ function replyEngine({persona, message, history}) {
   const tone = toneDetect(message);
   let stance = stanceFromTone(tone, history);
 
-  // GREETING → friendly open, no info-dump
+  // ----- GREETING: return directly (no pack/closures yet) -----
   if (isGreeting(message)) {
     const first = (who.name||"Betty").split(" ")[0];
-    return pack(`Hi Detective, ${first} here. What would you like to know about the hamper?`, "stay");
+    return {
+      persona: who.name,
+      reply_text: `Hi Detective, ${first} here. What would you like to know about the hamper?`,
+      tone_detected: tone,
+      stance,
+      policy_points_referenced: [],
+      risk_flags: [],
+      next_questions_for_detective: [],
+      memory_updates: [],
+      suggested_stage_transition: "stay"
+    };
   }
 
-  // Shared containers
+  // “What is your name” (and variants)
+  if (/^what('| i)?s your name\??$/i.test((message||"").trim())) {
+    const first = (who.name||"Betty").split(" ")[0];
+    return {
+      persona: who.name,
+      reply_text: `I’m ${first}. What would you like to ask about the hamper?`,
+      tone_detected: tone,
+      stance,
+      policy_points_referenced: [],
+      risk_flags: [],
+      next_questions_for_detective: [],
+      memory_updates: [],
+      suggested_stage_transition: "stay"
+    };
+  }
+
+  // Shared containers (defined BEFORE pack is used anywhere else)
   const m = norm(message);
   const ppSet   = new Set();
   const flags   = new Set(risksFromContext(message));
@@ -227,13 +251,13 @@ function replyEngine({persona, message, history}) {
     stance = "cooperative";
   }
 
-  // 1) Specific scenarios (rare)
+  // 1) Specific scenarios
   const sc = detectScenario(message);
   if (sc){
     return pack(sc.variants[0], "advance");
   }
 
-  // 2) Authored QA pairs (highest precision)
+  // 2) Authored QA pairs
   const qa = qaBestMatch(message);
   if (qa){
     if (/disclos/.test(qa.a)) addPP("use_disclosure_form");
@@ -313,24 +337,20 @@ function replyEngine({persona, message, history}) {
     return pack(reply, "stay");
   }
 
-  // package & post-process
+  // ---- inner pack helper (defined after shared vars exist) ----
   function pack(text, nextStage){
     let out = clamp(text);
 
-    // If accusatory tone and not yet cooperative, keep a light defensive clause
     if (tone==="accusatory" && stance!=="cooperative" && !/concern\.$/.test(out)){
       out = clamp(out + " I didn’t ask for it, but I understand the concern.");
       stance = "defensive";
     }
 
-    // auto-add PP based on reply content
     if (/disclos/.test(out)) ppSet.add("use_disclosure_form");
     if (/return|donate/.test(out)) ppSet.add("return_or_donate_when_in_doubt");
     if (/manager/.test(out)) ppSet.add("notify_manager");
 
     const dedupe = (arr) => Array.from(new Set(arr)).map(clamp);
-
-    // Merge explicit flags with any inferred from reply text
     const mergedFlags = new Set([ ...flags, ...risksFromContext(out) ]);
 
     return {
@@ -369,10 +389,9 @@ function handler(req, res){
     const json = replyEngine({ persona, message, history });
     return res.status(200).json({ ok:true, json });
   }catch(e){
-    // Never throw raw errors—always return JSON so Storyline can handle it.
     return res.status(200).json({ ok:false, error:"Server error processing your message." });
   }
 }
 
-module.exports = handler;          // CommonJS
-module.exports.default = handler;  // ESM compatibility (Vercel)
+module.exports = handler;
+module.exports.default = handler;
